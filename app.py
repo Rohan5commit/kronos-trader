@@ -14,10 +14,6 @@ from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# Add strategy module to path
-sys.path.insert(0, "/root/app")
-from strategy.portfolio import Portfolio as _Portfolio
-
 # =============================================================================
 # Modal App Setup
 # =============================================================================
@@ -45,8 +41,6 @@ image = (
 
 vol = modal.Volume.from_name("kronos-data", create_if_missing=True)
 
-project_dir = Path(__file__).parent
-
 VOLUME_PATH = "/kronos-data"
 MODEL_CACHE = f"{VOLUME_PATH}/model"
 DATA_CACHE = f"{VOLUME_PATH}/ohlcv"
@@ -59,7 +53,6 @@ DB_PATH = f"{VOLUME_PATH}/trades.db"
 @app.function(
     image=image,
     volumes={VOLUME_PATH: vol},
-    mounts=[modal.Mount.from_local_dir(project_dir, remote_path="/root/app")],
     gpu="T4",
     timeout=1800,
     secrets=[
@@ -293,6 +286,204 @@ def run_trading_cycle(send_email=False):
     vol.commit()
     print("\nTrading cycle complete.")
     return summary
+
+
+# =============================================================================
+# MODEL-DRIVEN PORTFOLIO
+# =============================================================================
+class _Portfolio:
+    """Fully model-driven portfolio. No hard-coded stop-loss/take-profit."""
+
+    def __init__(self, db_path, initial_cash=100_000.0):
+        self.db_path = db_path
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        self.initial_cash = initial_cash
+        self._init_db()
+
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS positions (
+                    symbol TEXT PRIMARY KEY, shares REAL DEFAULT 0,
+                    avg_cost REAL DEFAULT 0, entry_date TEXT,
+                    last_prediction REAL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS trades (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT,
+                    action TEXT, shares REAL, price REAL, total REAL,
+                    timestamp TEXT, reason TEXT
+                );
+                CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT UNIQUE,
+                    cash REAL, equity REAL, total_value REAL,
+                    positions_json TEXT, daily_pnl REAL, cumulative_pnl REAL
+                );
+                CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT);
+            """)
+            existing = conn.execute("SELECT value FROM state WHERE key='cash'").fetchone()
+            if not existing:
+                conn.execute("INSERT INTO state (key, value) VALUES ('cash', ?)", (str(self.initial_cash),))
+
+    def get_cash(self):
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute("SELECT value FROM state WHERE key='cash'").fetchone()
+            return float(row[0]) if row else self.initial_cash
+
+    def get_positions(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            return {r["symbol"]: dict(r) for r in conn.execute("SELECT * FROM positions WHERE shares > 0").fetchall()}
+
+    def get_total_equity(self, prices):
+        return sum(pos["shares"] * prices.get(sym, pos["avg_cost"]) for sym, pos in self.get_positions().items())
+
+    def get_total_value(self, prices):
+        return self.get_cash() + self.get_total_equity(prices)
+
+    def buy(self, symbol, price, shares, reason="signal", predicted_return=0.0):
+        cost = price * shares
+        cash = self.get_cash()
+        if cost > cash:
+            shares = int(cash / price)
+            if shares <= 0:
+                return False
+            cost = price * shares
+        with sqlite3.connect(self.db_path) as conn:
+            existing = conn.execute("SELECT shares, avg_cost FROM positions WHERE symbol=?", (symbol,)).fetchone()
+            if existing:
+                old_sh, old_avg = existing
+                new_sh = old_sh + shares
+                new_avg = (old_sh * old_avg + cost) / new_sh
+                conn.execute("UPDATE positions SET shares=?, avg_cost=? WHERE symbol=?", (new_sh, new_avg, symbol))
+            else:
+                conn.execute(
+                    "INSERT INTO positions (symbol, shares, avg_cost, entry_date, last_prediction) VALUES (?,?,?,?,?)",
+                    (symbol, shares, price, datetime.now().isoformat(), predicted_return),
+                )
+            conn.execute(
+                "INSERT INTO trades (symbol, action, shares, price, total, timestamp, reason) VALUES (?,?,?,?,?,?,?)",
+                (symbol, "buy", shares, price, cost, datetime.now().isoformat(), reason),
+            )
+            conn.execute("UPDATE state SET value=? WHERE key='cash'", (str(cash - cost),))
+        print(f"  BUY  {shares:>6} x {symbol:<8} @ ${price:>8.2f}  (${cost:>10.2f})  pred={predicted_return:+.2%}")
+        return True
+
+    def sell(self, symbol, price, reason="signal"):
+        with sqlite3.connect(self.db_path) as conn:
+            pos = conn.execute("SELECT shares, avg_cost FROM positions WHERE symbol=? AND shares>0", (symbol,)).fetchone()
+            if not pos:
+                return False
+            sh, avg = pos
+            pnl = (price - avg) * sh
+            pnl_pct = (price - avg) / avg * 100 if avg else 0
+            conn.execute("UPDATE positions SET shares=0 WHERE symbol=?", (symbol,))
+            conn.execute(
+                "INSERT INTO trades (symbol, action, shares, price, total, timestamp, reason) VALUES (?,?,?,?,?,?,?)",
+                (symbol, "sell", sh, price, price * sh, datetime.now().isoformat(), reason),
+            )
+            cash = self.get_cash()
+            conn.execute("UPDATE state SET value=? WHERE key='cash'", (str(cash + price * sh),))
+        print(f"  SELL {sh:>6} x {symbol:<8} @ ${price:>8.2f}  (P&L: ${pnl:>+10.2f} {pnl_pct:>+6.1f}%)  {reason}")
+        return True
+
+    def manage_positions(self, predictions, current_prices, max_positions=50, min_confidence=0.005):
+        """Model-driven: sell where model predicts negative, buy top predictions."""
+        actions = []
+        positions = self.get_positions()
+
+        # SELL: model predicts negative return or no prediction available
+        for sym, pos in list(positions.items()):
+            price = current_prices.get(sym)
+            if price is None:
+                continue
+            pred = predictions.get(sym)
+            if pred is None:
+                self.sell(sym, price, "no_prediction")
+                actions.append(f"SELL {sym} (no prediction)")
+                continue
+            ret = pred.get("predicted_return", 0)
+            conf = pred.get("confidence", 0)
+            if ret < 0 or conf < min_confidence:
+                self.sell(sym, price, f"model_sell ret={ret:+.2%} conf={conf:.3f}")
+                actions.append(f"SELL {sym} (ret={ret:+.2%})")
+
+        # BUY: rank by return * confidence, position size scaled by confidence
+        positions = self.get_positions()
+        total_value = self.get_total_value(current_prices)
+        cash = self.get_cash()
+        current_count = len([p for p in positions.values() if p["shares"] > 0])
+        slots = max_positions - current_count
+
+        candidates = []
+        for sym, pred in predictions.items():
+            if sym in positions and positions[sym].get("shares", 0) > 0:
+                continue
+            ret = pred.get("predicted_return", 0)
+            conf = pred.get("confidence", 0)
+            if ret <= 0 or conf < min_confidence:
+                continue
+            candidates.append((sym, pred, ret * conf))
+
+        candidates.sort(key=lambda x: x[2], reverse=True)
+
+        for sym, pred, score in candidates[:slots]:
+            if cash < 100:
+                break
+            price = current_prices.get(sym, pred.get("current_close", 0))
+            if price <= 0:
+                continue
+            conf = pred.get("confidence", 0)
+            ret = pred.get("predicted_return", 0)
+            conf_mult = min(conf / 0.05, 1.0)
+            position_pct = 0.01 + 0.04 * conf_mult
+            position_value = min(total_value * position_pct, cash * 0.95)
+            shares = int(position_value / price)
+            if shares > 0:
+                if self.buy(sym, price, shares, "model_buy", predicted_return=ret):
+                    actions.append(f"BUY {sym} x{shares} (ret={ret:+.2%}, conf={conf:.3f})")
+                    cash = self.get_cash()
+
+        return actions
+
+    def get_summary(self, prices):
+        cash = self.get_cash()
+        equity = self.get_total_equity(prices)
+        total = cash + equity
+        positions = self.get_positions()
+        with sqlite3.connect(self.db_path) as conn:
+            prev = conn.execute("SELECT total_value FROM portfolio_snapshots ORDER BY date DESC LIMIT 1").fetchone()
+            prev_total = float(prev[0]) if prev else self.initial_cash
+            today = datetime.now().strftime("%Y-%m-%d")
+            daily_pnl = total - prev_total
+            cum_pnl = total - self.initial_cash
+            conn.execute(
+                "INSERT OR REPLACE INTO portfolio_snapshots (date,cash,equity,total_value,positions_json,daily_pnl,cumulative_pnl) VALUES (?,?,?,?,?,?,?)",
+                (today, cash, equity, total, json.dumps({s: dict(p) for s, p in positions.items()}), daily_pnl, cum_pnl),
+            )
+            trades = conn.execute(
+                "SELECT symbol,action,shares,price,total,timestamp,reason FROM trades ORDER BY timestamp DESC LIMIT 10"
+            ).fetchall()
+            total_trades = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+
+        pos_pnl = []
+        for sym, pos in positions.items():
+            if pos["shares"] <= 0:
+                continue
+            p = prices.get(sym, pos["avg_cost"])
+            pnl = (p - pos["avg_cost"]) * pos["shares"]
+            pos_pnl.append({
+                "symbol": sym, "shares": pos["shares"], "avg_cost": pos["avg_cost"],
+                "current_price": p, "pnl": pnl,
+                "pnl_pct": (p - pos["avg_cost"]) / pos["avg_cost"] * 100 if pos["avg_cost"] else 0,
+            })
+        pos_pnl.sort(key=lambda x: x["pnl"], reverse=True)
+        return {
+            "date": today, "cash": cash, "equity": equity, "total_value": total,
+            "daily_pnl": daily_pnl, "cumulative_pnl": cum_pnl,
+            "num_positions": len([p for p in positions.values() if p["shares"] > 0]),
+            "top_winners": pos_pnl[:5], "top_losers": pos_pnl[-5:],
+            "total_trades": total_trades, "recent_trades": trades,
+        }
 
 
 # =============================================================================
