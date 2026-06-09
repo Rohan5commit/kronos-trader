@@ -15,7 +15,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # Add strategy module to path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, "/root/app")
 from strategy.portfolio import Portfolio as _Portfolio
 
 # =============================================================================
@@ -45,6 +45,8 @@ image = (
 
 vol = modal.Volume.from_name("kronos-data", create_if_missing=True)
 
+project_dir = Path(__file__).parent
+
 VOLUME_PATH = "/kronos-data"
 MODEL_CACHE = f"{VOLUME_PATH}/model"
 DATA_CACHE = f"{VOLUME_PATH}/ohlcv"
@@ -57,6 +59,7 @@ DB_PATH = f"{VOLUME_PATH}/trades.db"
 @app.function(
     image=image,
     volumes={VOLUME_PATH: vol},
+    mounts=[modal.Mount.from_local_dir(project_dir, remote_path="/root/app")],
     gpu="T4",
     timeout=1800,
     secrets=[
