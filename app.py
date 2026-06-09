@@ -188,15 +188,15 @@ def run_trading_cycle():
 
                 x_hist = df.iloc[:LOOKBACK][["open", "high", "low", "close", "volume"]].copy()
                 x_hist["amount"] = 0.0
-                x_timestamp = df.iloc[:LOOKBACK]["timestamp"]
+                x_timestamp = pd.Series(df.iloc[:LOOKBACK]["timestamp"])
 
                 # Generate synthetic future timestamps (business day freq from last timestamp)
                 last_ts = x_timestamp.iloc[-1]
-                y_timestamp = pd.date_range(
+                y_timestamp = pd.Series(pd.date_range(
                     start=last_ts + pd.Timedelta(days=1),
                     periods=PRED_LEN,
                     freq="B",
-                )
+                ))
 
                 # Validate no NaN
                 if x_hist.isnull().values.any():
