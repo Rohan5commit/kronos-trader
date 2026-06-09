@@ -111,23 +111,27 @@ def run_trading_cycle():
     print(f"\nData status: {len(cached_data)} cached, {len(symbols_to_fetch)} new, {len(symbols_to_update)} to update")
 
     if symbols_to_fetch:
-        print(f"\nFetching {len(symbols_to_fetch)} new stocks...")
-        new_data = _fetch_ohlcv_batch(API_KEYS, symbols_to_fetch, requests, pd, outputsize=600)
-        for sym, df in new_data.items():
-            df.to_parquet(data_cache_dir / f"{sym}.parquet", index=False)
-            cached_data[sym] = df
+        print(f"\nFetching {len(symbols_to_fetch)} new stocks in batches of 200...")
+        for batch_start in range(0, len(symbols_to_fetch), 200):
+            batch = symbols_to_fetch[batch_start:batch_start+200]
+            print(f"  Batch {batch_start//200+1}: fetching {len(batch)} stocks...")
+            new_data = _fetch_ohlcv_batch(API_KEYS, batch, requests, pd, outputsize=520)
+            for sym, df in new_data.items():
+                df.to_parquet(data_cache_dir / f"{sym}.parquet", index=False)
+                cached_data[sym] = df
+            vol.commit()
+            print(f"  Committed {len(new_data)} stocks to volume")
 
     if symbols_to_update:
         print(f"\nUpdating {len(symbols_to_update)} stocks with latest bars...")
         _update_latest_bars(API_KEYS, symbols_to_update, cached_data, data_cache_dir, requests, pd)
+        vol.commit()
 
     valid_data = {
         s: df for s, df in cached_data.items()
-        if len(df) >= 520
+        if len(df) >= 100
     }
     print(f"\nValid stocks for prediction: {len(valid_data)}")
-
-    vol.commit()
 
     # =========================================================================
     # 4. LOAD KRONOS MODEL
