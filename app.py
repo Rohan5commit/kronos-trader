@@ -246,29 +246,23 @@ def run_trading_cycle(send_email=False):
     print(f"  Sell signals: {len([s for s in signals if s['action'] == 'sell'])}")
 
     # =========================================================================
-    # 7. EXECUTE PAPER TRADES
+    # 7. EXECUTE PAPER TRADES (model-driven)
     # =========================================================================
-    print("\nExecuting trades...")
+    print("\nExecuting trades (model-driven)...")
     current_prices = {s: p["current_close"] for s, p in predictions.items()}
 
     portfolio = _Portfolio(DB_PATH, initial_cash=100_000.0)
-    sl_tp_actions = portfolio.check_stop_loss_take_profit(current_prices)
-    for a in sl_tp_actions:
-        print(f"  {a}")
-
-    rebalance_actions = portfolio.rebalance(
-        signals, current_prices,
+    trade_actions = portfolio.manage_positions(
+        predictions, current_prices,
         max_positions=50,
-        position_size_pct=0.02,
+        min_confidence=0.005,
     )
-    for a in rebalance_actions:
-        print(f"  {a}")
 
     # =========================================================================
     # 8. TAKE SNAPSHOT & SEND EMAIL
     # =========================================================================
     summary = portfolio.get_summary(current_prices)
-    report = _format_report(summary, signals, sl_tp_actions + rebalance_actions)
+    report = _format_report(summary, signals, trade_actions)
 
     print(f"\n{'='*60}")
     print(report)

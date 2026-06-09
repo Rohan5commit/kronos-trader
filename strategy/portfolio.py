@@ -7,8 +7,9 @@ from typing import Optional
 
 class Portfolio:
     """
-    Paper trading portfolio tracker using SQLite.
-    Manages positions, trades, cash, and P&L.
+    Fully model-driven paper trading portfolio.
+    Buy/sell decisions come entirely from Kronos predictions.
+    No hard-coded stop-loss, take-profit, or rebalancing.
     """
 
     def __init__(self, db_path: str, initial_cash: float = 100_000.0):
@@ -25,8 +26,7 @@ class Portfolio:
                     shares REAL DEFAULT 0,
                     avg_cost REAL DEFAULT 0,
                     entry_date TEXT,
-                    stop_loss REAL,
-                    take_profit REAL
+                    last_prediction REAL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS trades (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,8 +53,6 @@ class Portfolio:
                     value TEXT
                 );
             """)
-
-            # Initialize cash if not set
             existing = conn.execute(
                 "SELECT value FROM state WHERE key = 'cash'"
             ).fetchone()
@@ -89,7 +87,8 @@ class Portfolio:
         return self.get_cash() + self.get_total_equity(current_prices)
 
     def buy(
-        self, symbol: str, price: float, shares: float, reason: str = "signal"
+        self, symbol: str, price: float, shares: float, reason: str = "signal",
+        predicted_return: float = 0.0,
     ) -> bool:
         cost = price * shares
         cash = self.get_cash()
@@ -114,11 +113,9 @@ class Portfolio:
                     (new_shares, new_avg, symbol),
                 )
             else:
-                stop_loss = price * 0.95
-                take_profit = price * 1.15
                 conn.execute(
-                    "INSERT INTO positions (symbol, shares, avg_cost, entry_date, stop_loss, take_profit) VALUES (?, ?, ?, ?, ?, ?)",
-                    (symbol, shares, price, datetime.now().isoformat(), stop_loss, take_profit),
+                    "INSERT INTO positions (symbol, shares, avg_cost, entry_date, last_prediction) VALUES (?, ?, ?, ?, ?)",
+                    (symbol, shares, price, datetime.now().isoformat(), predicted_return),
                 )
 
             conn.execute(
@@ -131,7 +128,7 @@ class Portfolio:
                 "UPDATE state SET value = ? WHERE key = 'cash'", (str(new_cash),)
             )
 
-        print(f"  BOUGHT {shares} shares of {symbol} @ ${price:.2f} (${cost:.2f})")
+        print(f"  BUY  {shares:>6} x {symbol:<8} @ ${price:>8.2f}  (${cost:>10.2f})  pred={predicted_return:+.2%}")
         return True
 
     def sell(self, symbol: str, price: float, reason: str = "signal") -> bool:
@@ -146,6 +143,7 @@ class Portfolio:
             shares, avg_cost = pos
             proceeds = price * shares
             pnl = (price - avg_cost) * shares
+            pnl_pct = (price - avg_cost) / avg_cost * 100
 
             conn.execute(
                 "UPDATE positions SET shares = 0 WHERE symbol = ?", (symbol,)
@@ -161,75 +159,97 @@ class Portfolio:
                 "UPDATE state SET value = ? WHERE key = 'cash'", (str(new_cash),)
             )
 
-        print(f"  SOLD {shares} shares of {symbol} @ ${price:.2f} (P&L: ${pnl:+.2f}) - {reason}")
+        print(f"  SELL {shares:>6} x {symbol:<8} @ ${price:>8.2f}  (P&L: ${pnl:>+10.2f} {pnl_pct:>+6.1f}%)  {reason}")
         return True
 
-    def check_stop_loss_take_profit(
-        self, current_prices: dict[str, float]
+    def manage_positions(
+        self,
+        predictions: dict[str, dict],
+        current_prices: dict[str, float],
+        max_positions: int = 50,
+        min_confidence: float = 0.005,
     ) -> list[str]:
-        """Check and execute stop-loss / take-profit triggers."""
+        """
+        Model-driven position management:
+        1. Sell held positions where model predicts negative return or low confidence
+        2. Buy top predicted stocks not yet held
+        Position size scaled by confidence.
+        """
         actions = []
         positions = self.get_positions()
+        cash = self.get_cash()
+        total_value = self.get_total_value(current_prices)
 
-        for sym, pos in positions.items():
+        # ---- STEP 1: SELL ----
+        # Sell if model predicts return < 0 or confidence too low
+        for sym, pos in list(positions.items()):
             price = current_prices.get(sym)
             if price is None:
                 continue
 
-            if price <= pos["stop_loss"]:
-                self.sell(sym, price, reason="stop_loss")
-                actions.append(f"STOP LOSS: {sym} @ ${price:.2f}")
-            elif price >= pos["take_profit"]:
-                self.sell(sym, price, reason="take_profit")
-                actions.append(f"TAKE PROFIT: {sym} @ ${price:.2f}")
+            pred = predictions.get(sym)
+            if pred is None:
+                # No prediction available — model doesn't want it anymore
+                self.sell(sym, price, reason="no_prediction")
+                actions.append(f"SELL {sym} (no prediction)")
+                continue
 
-        return actions
+            predicted_return = pred.get("predicted_return", 0)
+            confidence = pred.get("confidence", 0)
 
-    def rebalance(
-        self,
-        signals: list[dict],
-        current_prices: dict[str, float],
-        max_positions: int = 50,
-        position_size_pct: float = 0.02,
-    ) -> list[str]:
-        """
-        Execute rebalancing based on signals.
-        Sells stocks not in top signals, buys new top signals.
-        """
-        actions = []
-        total_value = self.get_total_value(current_prices)
-        cash = self.get_cash()
+            # Model says sell: negative return or too uncertain
+            if predicted_return < 0 or confidence < min_confidence:
+                self.sell(sym, price, reason=f"model_sell: ret={predicted_return:+.2%} conf={confidence:.3f}")
+                actions.append(f"SELL {sym} (ret={predicted_return:+.2%})")
 
-        # Determine which stocks to hold (top N by score)
-        buy_signals = [s for s in signals if s["action"] == "buy"][:max_positions]
-        target_syms = {s["symbol"] for s in buy_signals}
-
-        # Sell positions not in target
-        positions = self.get_positions()
-        for sym in positions:
-            if sym not in target_syms:
-                price = current_prices.get(sym, positions[sym]["avg_cost"])
-                self.sell(sym, price, reason="rebalance_out")
-                actions.append(f"SELL: {sym}")
-
-        # Buy new positions
-        position_size = total_value * position_size_pct
-        for sig in buy_signals:
-            sym = sig["symbol"]
-            price = current_prices.get(sym, sig["current_close"])
-            current_pos = positions.get(sym, {}).get("shares", 0)
-
-            if current_pos > 0:
+        # ---- STEP 2: BUY ----
+        # Rank all predictions by score, buy top N not yet held
+        buy_candidates = []
+        for sym, pred in predictions.items():
+            if sym in positions and positions[sym].get("shares", 0) > 0:
                 continue  # Already holding
 
-            if cash < position_size:
-                break  # Not enough cash
+            predicted_return = pred.get("predicted_return", 0)
+            confidence = pred.get("confidence", 0)
 
-            shares = int(position_size / price)
+            if predicted_return <= 0:
+                continue  # Model doesn't predict upside
+            if confidence < min_confidence:
+                continue  # Too uncertain
+
+            # Score = return * confidence (simple model-driven ranking)
+            score = predicted_return * confidence
+            buy_candidates.append((sym, pred, score))
+
+        buy_candidates.sort(key=lambda x: x[2], reverse=True)
+
+        # How many more positions can we take?
+        current_positions = len([p for p in self.get_positions().values() if p["shares"] > 0])
+        slots = max_positions - current_positions
+
+        cash = self.get_cash()
+        for sym, pred, score in buy_candidates[:slots]:
+            if cash < 100:
+                break
+
+            price = current_prices.get(sym, pred.get("current_close", 0))
+            if price <= 0:
+                continue
+
+            confidence = pred.get("confidence", 0)
+            predicted_return = pred.get("predicted_return", 0)
+
+            # Position size scaled by confidence: 1%-5% of portfolio
+            confidence_multiplier = min(confidence / 0.05, 1.0)
+            position_pct = 0.01 + 0.04 * confidence_multiplier  # 1% to 5%
+            position_value = total_value * position_pct
+            position_value = min(position_value, cash * 0.95)  # Never use more than 95% of cash
+
+            shares = int(position_value / price)
             if shares > 0:
-                self.buy(sym, price, shares, reason="rebalance_in")
-                actions.append(f"BUY: {sym} x{shares}")
-                cash = self.get_cash()
+                if self.buy(sym, price, shares, reason="model_buy", predicted_return=predicted_return):
+                    actions.append(f"BUY {sym} x{shares} (ret={predicted_return:+.2%}, conf={confidence:.3f})")
+                    cash = self.get_cash()
 
         return actions
 
@@ -240,7 +260,6 @@ class Portfolio:
         total = cash + equity
         positions = self.get_positions()
 
-        # Get yesterday's snapshot for daily P&L
         with sqlite3.connect(str(self.db_path)) as conn:
             prev = conn.execute(
                 "SELECT total_value FROM portfolio_snapshots ORDER BY date DESC LIMIT 1"
@@ -279,7 +298,6 @@ class Portfolio:
         snap = self.snapshot(current_prices)
         positions = self.get_positions()
 
-        # Top winners and losers
         pos_pnl = []
         for sym, pos in positions.items():
             if pos["shares"] <= 0:
