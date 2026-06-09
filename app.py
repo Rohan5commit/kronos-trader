@@ -61,7 +61,7 @@ DB_PATH = f"{VOLUME_PATH}/trades.db"
     ],
     memory=16384,
 )
-def run_trading_cycle():
+def run_trading_cycle(send_email=False):
     """Main trading cycle — fetches data, runs inference, trades, emails report."""
     import torch
     import numpy as np
@@ -278,7 +278,7 @@ def run_trading_cycle():
     password = os.environ.get("KRONOS_EMAIL_PASSWORD", "")
     recipient = os.environ.get("KRONOS_RECIPIENT", sender)
 
-    if sender and password and recipient:
+    if send_email and sender and password and recipient:
         _send_email(
             subject=f"Kronos Report — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
             body=report,
@@ -733,5 +733,5 @@ def pre_market_run():
     schedule=modal.Cron("45 15 * * 1-5"),
 )
 def post_market_run():
-    """Post-market: update data + rebalance, 3:45 PM ET weekdays."""
-    run_trading_cycle.local()
+    """Post-market: update data + rebalance + email report, 3:45 PM ET weekdays."""
+    run_trading_cycle.local(send_email=True)
