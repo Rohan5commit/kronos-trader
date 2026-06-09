@@ -8,13 +8,9 @@ import sys
 import time
 import sqlite3
 import smtplib
-import requests
-import numpy as np
-import pandas as pd
 import modal
 from pathlib import Path
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -23,7 +19,6 @@ from email.mime.multipart import MIMEMultipart
 # =============================================================================
 app = modal.App("kronos-trader")
 
-# Container image: PyTorch + all deps + Kronos repo
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
@@ -44,7 +39,6 @@ image = (
     )
 )
 
-# Persistent volume for model weights + OHLCV cache + trade database
 vol = modal.Volume.from_name("kronos-data", create_if_missing=True)
 
 VOLUME_PATH = "/kronos-data"
@@ -60,20 +54,23 @@ DB_PATH = f"{VOLUME_PATH}/trades.db"
     image=image,
     volumes={VOLUME_PATH: vol},
     gpu="T4",
-    timeout=1800,  # 30 min max
+    timeout=1800,
     secrets=[
         modal.Secret.from_name("kronos-twelve-data"),
-        modal.Secret.from_name("kronos-email", required=False),
     ],
-    memory=16384,  # 16GB RAM
+    memory=16384,
 )
 def run_trading_cycle():
     """Main trading cycle — fetches data, runs inference, trades, emails report."""
+    import torch
+    import numpy as np
+    import pandas as pd
+    import requests
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     print(f"\n{'='*60}")
     print(f"  KRONOS TRADING ENGINE — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}\n")
-
-    import torch
 
     # =========================================================================
     # 1. LOAD API KEYS
@@ -95,7 +92,7 @@ def run_trading_cycle():
         print(f"Loaded {len(all_symbols)} cached symbols")
     else:
         print("Fetching stock universe from Twelve Data...")
-        all_symbols = _fetch_stock_universe(API_KEYS)
+        all_symbols = _fetch_stock_universe(API_KEYS, requests)
         stock_list_path.parent.mkdir(parents=True, exist_ok=True)
         with open(stock_list_path, "w") as f:
             json.dump(all_symbols, f)
@@ -107,29 +104,26 @@ def run_trading_cycle():
     data_cache_dir = Path(DATA_CACHE)
     data_cache_dir.mkdir(parents=True, exist_ok=True)
 
-    cached_data = _load_cached_data(data_cache_dir)
+    cached_data = _load_cached_data(data_cache_dir, pd)
     symbols_to_fetch = [s for s in all_symbols if s not in cached_data]
     symbols_to_update = [s for s in all_symbols if s in cached_data]
 
     print(f"\nData status: {len(cached_data)} cached, {len(symbols_to_fetch)} new, {len(symbols_to_update)} to update")
 
-    # Fetch new stocks (full history)
     if symbols_to_fetch:
         print(f"\nFetching {len(symbols_to_fetch)} new stocks...")
-        new_data = _fetch_ohlcv_batch(API_KEYS, symbols_to_fetch, outputsize=600)
+        new_data = _fetch_ohlcv_batch(API_KEYS, symbols_to_fetch, requests, pd, outputsize=600)
         for sym, df in new_data.items():
             df.to_parquet(data_cache_dir / f"{sym}.parquet", index=False)
             cached_data[sym] = df
 
-    # Update existing stocks (latest bars only)
     if symbols_to_update:
         print(f"\nUpdating {len(symbols_to_update)} stocks with latest bars...")
-        _update_latest_bars(API_KEYS, symbols_to_update, cached_data, data_cache_dir)
+        _update_latest_bars(API_KEYS, symbols_to_update, cached_data, data_cache_dir, requests, pd)
 
-    # Filter to stocks with enough data
     valid_data = {
         s: df for s, df in cached_data.items()
-        if len(df) >= 520  # Need context_length (512) + some buffer
+        if len(df) >= 520
     }
     print(f"\nValid stocks for prediction: {len(valid_data)}")
 
@@ -224,7 +218,7 @@ def run_trading_cycle():
     # =========================================================================
     # 6. GENERATE TRADING SIGNALS
     # =========================================================================
-    signals = _generate_signals(predictions, valid_data)
+    signals = _generate_signals(predictions, valid_data, np)
     print(f"\nGenerated {len(signals)} signals")
     print(f"  Buy signals:  {len([s for s in signals if s['action'] == 'buy'])}")
     print(f"  Sell signals: {len([s for s in signals if s['action'] == 'sell'])}")
@@ -235,13 +229,11 @@ def run_trading_cycle():
     print("\nExecuting trades...")
     current_prices = {s: p["current_close"] for s, p in predictions.items()}
 
-    # Check stop-loss / take-profit
     portfolio = _Portfolio(DB_PATH, initial_cash=100_000.0)
     sl_tp_actions = portfolio.check_stop_loss_take_profit(current_prices)
     for a in sl_tp_actions:
         print(f"  {a}")
 
-    # Rebalance
     rebalance_actions = portfolio.rebalance(
         signals, current_prices,
         max_positions=50,
@@ -260,7 +252,6 @@ def run_trading_cycle():
     print(report)
     print(f"{'='*60}")
 
-    # Send email
     sender = os.environ.get("KRONOS_EMAIL", "")
     password = os.environ.get("KRONOS_EMAIL_PASSWORD", "")
     recipient = os.environ.get("KRONOS_RECIPIENT", sender)
@@ -282,19 +273,18 @@ def run_trading_cycle():
 
 
 # =============================================================================
-# HELPER FUNCTIONS (defined at module level so they're serializable)
+# HELPER FUNCTIONS
 # =============================================================================
 
-def _fetch_stock_universe(api_keys: list[str]) -> list[str]:
+def _fetch_stock_universe(api_keys, requests_mod):
     """Fetch top US stocks from Twelve Data."""
     key_idx = 0
     symbols = []
-
     for exchange in ["NASDAQ", "NYSE", "AMEX"]:
         key = api_keys[key_idx % len(api_keys)]
         key_idx += 1
         try:
-            resp = requests.get(
+            resp = requests_mod.get(
                 "https://api.twelvedata.com/stocks",
                 params={"exchange": exchange, "apikey": key},
                 timeout=30,
@@ -307,20 +297,14 @@ def _fetch_stock_universe(api_keys: list[str]) -> list[str]:
         except Exception as e:
             print(f"Error fetching {exchange}: {e}")
         time.sleep(1)
-
     return symbols[:1200]
 
 
-def _fetch_ohlcv_batch(
-    api_keys: list[str],
-    symbols: list[str],
-    outputsize: int = 600,
-) -> dict:
+def _fetch_ohlcv_batch(api_keys, symbols, requests_mod, pd_mod, outputsize=600):
     """Fetch OHLCV data with key rotation."""
     results = {}
     key_idx = [0]
     call_times = {k: [] for k in api_keys}
-    min_interval = 7.5
 
     def get_key():
         key = api_keys[key_idx[0] % len(api_keys)]
@@ -337,7 +321,7 @@ def _fetch_ohlcv_batch(
     def fetch_one(sym):
         key = get_key()
         try:
-            resp = requests.get(
+            resp = requests_mod.get(
                 "https://api.twelvedata.com/time_series",
                 params={"symbol": sym, "interval": "1day", "outputsize": outputsize, "apikey": key},
                 timeout=30,
@@ -345,16 +329,17 @@ def _fetch_ohlcv_batch(
             data = resp.json()
             if "values" not in data:
                 return sym, None
-            df = pd.DataFrame(data["values"])
+            df = pd_mod.DataFrame(data["values"])
             df = df.rename(columns={"datetime": "timestamp"})
-            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            df["timestamp"] = pd_mod.to_datetime(df["timestamp"])
             for col in ["open", "high", "low", "close", "volume"]:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+                df[col] = pd_mod.to_numeric(df[col], errors="coerce")
             df = df.sort_values("timestamp").reset_index(drop=True)
             return sym, df[["timestamp", "open", "high", "low", "close", "volume"]]
         except Exception:
             return sym, None
 
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     with ThreadPoolExecutor(max_workers=8) as executor:
         futures = {executor.submit(fetch_one, s): s for s in symbols}
         done = 0
@@ -365,31 +350,23 @@ def _fetch_ohlcv_batch(
                 results[sym] = df
             if done % 100 == 0:
                 print(f"  Fetched {done}/{len(symbols)} stocks...")
-
     return results
 
 
-def _load_cached_data(cache_dir: Path) -> dict:
+def _load_cached_data(cache_dir, pd_mod):
     """Load cached parquet files."""
     data = {}
     for f in cache_dir.glob("*.parquet"):
         try:
-            data[f.stem] = pd.read_parquet(f)
+            data[f.stem] = pd_mod.read_parquet(f)
         except Exception:
             pass
     return data
 
 
-def _update_latest_bars(
-    api_keys: list[str],
-    symbols: list[str],
-    cached_data: dict,
-    cache_dir: Path,
-    num_bars: int = 10,
-):
+def _update_latest_bars(api_keys, symbols, cached_data, cache_dir, requests_mod, pd_mod, num_bars=10):
     """Fetch only latest bars and update cache."""
     key_idx = [0]
-
     def get_key():
         key = api_keys[key_idx[0] % len(api_keys)]
         key_idx[0] += 1
@@ -398,7 +375,7 @@ def _update_latest_bars(
     for i, sym in enumerate(symbols):
         key = get_key()
         try:
-            resp = requests.get(
+            resp = requests_mod.get(
                 "https://api.twelvedata.com/time_series",
                 params={"symbol": sym, "interval": "1day", "outputsize": num_bars, "apikey": key},
                 timeout=30,
@@ -406,27 +383,24 @@ def _update_latest_bars(
             data = resp.json()
             if "values" not in data:
                 continue
-            new_df = pd.DataFrame(data["values"])
+            new_df = pd_mod.DataFrame(data["values"])
             new_df = new_df.rename(columns={"datetime": "timestamp"})
-            new_df["timestamp"] = pd.to_datetime(new_df["timestamp"])
+            new_df["timestamp"] = pd_mod.to_datetime(new_df["timestamp"])
             for col in ["open", "high", "low", "close", "volume"]:
-                new_df[col] = pd.to_numeric(new_df[col], errors="coerce")
-
-            combined = pd.concat([cached_data[sym], new_df]).drop_duplicates(
+                new_df[col] = pd_mod.to_numeric(new_df[col], errors="coerce")
+            combined = pd_mod.concat([cached_data[sym], new_df]).drop_duplicates(
                 subset=["timestamp"], keep="last"
             ).sort_values("timestamp").reset_index(drop=True).tail(600)
             cached_data[sym] = combined
             combined.to_parquet(cache_dir / f"{sym}.parquet", index=False)
         except Exception:
             pass
-
         if (i + 1) % 100 == 0:
             print(f"  Updated {i+1}/{len(symbols)} stocks...")
-
         time.sleep(0.1)
 
 
-def _generate_signals(predictions: dict, stock_data: dict) -> list[dict]:
+def _generate_signals(predictions, stock_data, np_mod):
     """Generate ranked trading signals."""
     signals = []
     for sym, pred in predictions.items():
@@ -438,13 +412,13 @@ def _generate_signals(predictions: dict, stock_data: dict) -> list[dict]:
             continue
 
         vol_score = 1.0 / (pred_std_pct + 0.01)
-        score = 0.60 * predicted_return + 0.25 * np.tanh(confidence) + 0.15 * np.tanh(vol_score)
+        score = 0.60 * predicted_return + 0.25 * float(np_mod.tanh(confidence)) + 0.15 * float(np_mod.tanh(vol_score))
 
         hist = stock_data.get(sym)
         if hist is not None and len(hist) >= 20:
             closes = hist["close"].values
-            sma20 = np.mean(closes[-20:])
-            sma5 = np.mean(closes[-5:])
+            sma20 = float(np_mod.mean(closes[-20:]))
+            sma5 = float(np_mod.mean(closes[-5:]))
             momentum = (sma5 - sma20) / sma20
             if momentum > 0:
                 score *= 1.2
@@ -462,9 +436,9 @@ def _generate_signals(predictions: dict, stock_data: dict) -> list[dict]:
 
 
 class _Portfolio:
-    """Inline portfolio tracker."""
+    """Inline portfolio tracker using SQLite."""
 
-    def __init__(self, db_path: str, initial_cash: float = 100_000.0):
+    def __init__(self, db_path, initial_cash=100_000.0):
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.initial_cash = initial_cash
@@ -494,20 +468,20 @@ class _Portfolio:
             if not existing:
                 conn.execute("INSERT INTO state (key, value) VALUES ('cash', ?)", (str(self.initial_cash),))
 
-    def get_cash(self) -> float:
+    def get_cash(self):
         with sqlite3.connect(self.db_path) as conn:
             row = conn.execute("SELECT value FROM state WHERE key='cash'").fetchone()
             return float(row[0]) if row else self.initial_cash
 
-    def get_positions(self) -> dict:
+    def get_positions(self):
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             return {r["symbol"]: dict(r) for r in conn.execute("SELECT * FROM positions WHERE shares > 0").fetchall()}
 
-    def get_total_equity(self, prices: dict) -> float:
+    def get_total_equity(self, prices):
         return sum(pos["shares"] * prices.get(sym, pos["avg_cost"]) for sym, pos in self.get_positions().items())
 
-    def get_total_value(self, prices: dict) -> float:
+    def get_total_value(self, prices):
         return self.get_cash() + self.get_total_equity(prices)
 
     def buy(self, symbol, price, shares, reason="signal"):
@@ -526,10 +500,14 @@ class _Portfolio:
                 new_avg = (old_sh * old_avg + cost) / new_sh
                 conn.execute("UPDATE positions SET shares=?, avg_cost=? WHERE symbol=?", (new_sh, new_avg, symbol))
             else:
-                conn.execute("INSERT INTO positions (symbol, shares, avg_cost, entry_date, stop_loss, take_profit) VALUES (?,?,?,?,?,?)",
-                    (symbol, shares, price, datetime.now().isoformat(), price*0.95, price*1.15))
-            conn.execute("INSERT INTO trades (symbol, action, shares, price, total, timestamp, reason) VALUES (?,?,?,?,?,?,?)",
-                (symbol, "buy", shares, price, cost, datetime.now().isoformat(), reason))
+                conn.execute(
+                    "INSERT INTO positions (symbol, shares, avg_cost, entry_date, stop_loss, take_profit) VALUES (?,?,?,?,?,?)",
+                    (symbol, shares, price, datetime.now().isoformat(), price * 0.95, price * 1.15),
+                )
+            conn.execute(
+                "INSERT INTO trades (symbol, action, shares, price, total, timestamp, reason) VALUES (?,?,?,?,?,?,?)",
+                (symbol, "buy", shares, price, cost, datetime.now().isoformat(), reason),
+            )
             conn.execute("UPDATE state SET value=? WHERE key='cash'", (str(cash - cost),))
         return True
 
@@ -539,12 +517,13 @@ class _Portfolio:
             if not pos:
                 return False
             sh, avg = pos
-            pnl = (price - avg) * sh
             conn.execute("UPDATE positions SET shares=0 WHERE symbol=?", (symbol,))
-            conn.execute("INSERT INTO trades (symbol, action, shares, price, total, timestamp, reason) VALUES (?,?,?,?,?,?,?)",
-                (symbol, "sell", sh, price, price*sh, datetime.now().isoformat(), reason))
+            conn.execute(
+                "INSERT INTO trades (symbol, action, shares, price, total, timestamp, reason) VALUES (?,?,?,?,?,?,?)",
+                (symbol, "sell", sh, price, price * sh, datetime.now().isoformat(), reason),
+            )
             cash = self.get_cash()
-            conn.execute("UPDATE state SET value=? WHERE key='cash'", (str(cash + price*sh),))
+            conn.execute("UPDATE state SET value=? WHERE key='cash'", (str(cash + price * sh),))
         return True
 
     def check_stop_loss_take_profit(self, prices):
@@ -599,9 +578,13 @@ class _Portfolio:
             today = datetime.now().strftime("%Y-%m-%d")
             daily_pnl = total - prev_total
             cum_pnl = total - self.initial_cash
-            conn.execute("INSERT OR REPLACE INTO portfolio_snapshots (date,cash,equity,total_value,positions_json,daily_pnl,cumulative_pnl) VALUES (?,?,?,?,?,?,?)",
-                (today, cash, equity, total, json.dumps({s:dict(p) for s,p in positions.items()}), daily_pnl, cum_pnl))
-            trades = conn.execute("SELECT symbol,action,shares,price,total,timestamp,reason FROM trades ORDER BY timestamp DESC LIMIT 10").fetchall()
+            conn.execute(
+                "INSERT OR REPLACE INTO portfolio_snapshots (date,cash,equity,total_value,positions_json,daily_pnl,cumulative_pnl) VALUES (?,?,?,?,?,?,?)",
+                (today, cash, equity, total, json.dumps({s: dict(p) for s, p in positions.items()}), daily_pnl, cum_pnl),
+            )
+            trades = conn.execute(
+                "SELECT symbol,action,shares,price,total,timestamp,reason FROM trades ORDER BY timestamp DESC LIMIT 10"
+            ).fetchall()
             total_trades = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
 
         pos_pnl = []
@@ -610,54 +593,74 @@ class _Portfolio:
                 continue
             p = prices.get(sym, pos["avg_cost"])
             pnl = (p - pos["avg_cost"]) * pos["shares"]
-            pos_pnl.append({"symbol": sym, "shares": pos["shares"], "avg_cost": pos["avg_cost"],
-                "current_price": p, "pnl": pnl, "pnl_pct": (p-pos["avg_cost"])/pos["avg_cost"]*100})
+            pos_pnl.append({
+                "symbol": sym, "shares": pos["shares"], "avg_cost": pos["avg_cost"],
+                "current_price": p, "pnl": pnl,
+                "pnl_pct": (p - pos["avg_cost"]) / pos["avg_cost"] * 100,
+            })
         pos_pnl.sort(key=lambda x: x["pnl"], reverse=True)
 
-        return {"date": today, "cash": cash, "equity": equity, "total_value": total,
+        return {
+            "date": today, "cash": cash, "equity": equity, "total_value": total,
             "daily_pnl": daily_pnl, "cumulative_pnl": cum_pnl,
-            "num_positions": len([p for p in positions.values() if p["shares"]>0]),
+            "num_positions": len([p for p in positions.values() if p["shares"] > 0]),
             "top_winners": pos_pnl[:5], "top_losers": pos_pnl[-5:],
-            "total_trades": total_trades, "recent_trades": trades}
+            "total_trades": total_trades, "recent_trades": trades,
+        }
 
 
 def _format_report(summary, signals, actions):
     lines = [
-        "="*60, "  KRONOS TRADING ENGINE — DAILY REPORT", f"  {datetime.now().strftime('%Y-%m-%d %H:%M')}", "="*60, "",
-        "PORTFOLIO SUMMARY", "-"*40,
+        "=" * 60,
+        "  KRONOS TRADING ENGINE — DAILY REPORT",
+        f"  {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "=" * 60,
+        "",
+        "PORTFOLIO SUMMARY",
+        "-" * 40,
         f"  Cash:           ${summary['cash']:>12,.2f}",
         f"  Equity:         ${summary['equity']:>12,.2f}",
         f"  Total Value:    ${summary['total_value']:>12,.2f}",
         f"  Daily P&L:      ${summary['daily_pnl']:>12,.2f}",
         f"  Cumulative P&L: ${summary['cumulative_pnl']:>12,.2f}",
         f"  Positions:      {summary['num_positions']}",
-        f"  Total Trades:   {summary['total_trades']}", "",
+        f"  Total Trades:   {summary['total_trades']}",
+        "",
     ]
     if actions:
         lines.append("TODAY'S ACTIONS")
-        lines.append("-"*40)
+        lines.append("-" * 40)
         for a in actions:
             lines.append(f"  {a}")
         lines.append("")
     if summary.get("top_winners"):
         lines.append("TOP WINNERS")
-        lines.append("-"*40)
+        lines.append("-" * 40)
         for p in summary["top_winners"]:
-            lines.append(f"  {p['symbol']:>6s}  {p['shares']:.0f} sh  ${p['current_price']:>8.2f}  P&L: ${p['pnl']:>+8.2f} ({p['pnl_pct']:>+.1f}%)")
+            lines.append(
+                f"  {p['symbol']:>6s}  {p['shares']:.0f} sh  "
+                f"${p['current_price']:>8.2f}  P&L: ${p['pnl']:>+8.2f} ({p['pnl_pct']:>+.1f}%)"
+            )
         lines.append("")
     if summary.get("top_losers"):
         lines.append("TOP LOSERS")
-        lines.append("-"*40)
+        lines.append("-" * 40)
         for p in summary["top_losers"]:
-            lines.append(f"  {p['symbol']:>6s}  {p['shares']:.0f} sh  ${p['current_price']:>8.2f}  P&L: ${p['pnl']:>+8.2f} ({p['pnl_pct']:>+.1f}%)")
+            lines.append(
+                f"  {p['symbol']:>6s}  {p['shares']:.0f} sh  "
+                f"${p['current_price']:>8.2f}  P&L: ${p['pnl']:>+8.2f} ({p['pnl_pct']:>+.1f}%)"
+            )
         lines.append("")
     if summary.get("recent_trades"):
         lines.append("RECENT TRADES")
-        lines.append("-"*40)
+        lines.append("-" * 40)
         for t in summary["recent_trades"][:10]:
-            lines.append(f"  {t[5][:16]}  {t[1].upper():>4s}  {t[0]:>6s}  {t[2]:.0f} x ${t[3]:.2f} = ${t[4]:.2f}  ({t[6]})")
+            lines.append(
+                f"  {t[5][:16]}  {t[1].upper():>4s}  {t[0]:>6s}  "
+                f"{t[2]:.0f} x ${t[3]:.2f} = ${t[4]:.2f}  ({t[6]})"
+            )
         lines.append("")
-    lines.extend(["="*60, "  Generated by Kronos Trading Engine", "="*60])
+    lines.extend(["=" * 60, "  Generated by Kronos Trading Engine", "=" * 60])
     return "\n".join(lines)
 
 
@@ -683,18 +686,18 @@ def _send_email(subject, body, sender_email, sender_password, recipient_email):
 @app.function(
     image=image,
     volumes={VOLUME_PATH: vol},
-    schedule=modal.Cron("30 9 * * 1-5"),  # 9:30 AM ET, weekdays
+    schedule=modal.Cron("30 9 * * 1-5"),
 )
 def pre_market_run():
-    """Pre-market data fetch + prediction (runs before market open)."""
+    """Pre-market: fetch data + predict + trade, 9:30 AM ET weekdays."""
     run_trading_cycle.local()
 
 
 @app.function(
     image=image,
     volumes={VOLUME_PATH: vol},
-    schedule=modal.Cron("45 15 * * 1-5"),  # 3:45 PM ET, weekdays
+    schedule=modal.Cron("45 15 * * 1-5"),
 )
 def post_market_run():
-    """Post-market update + rebalance (runs before market close)."""
+    """Post-market: update data + rebalance, 3:45 PM ET weekdays."""
     run_trading_cycle.local()
