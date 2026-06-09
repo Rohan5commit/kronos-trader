@@ -57,6 +57,7 @@ DB_PATH = f"{VOLUME_PATH}/trades.db"
     timeout=1800,
     secrets=[
         modal.Secret.from_name("kronos-twelve-data"),
+        modal.Secret.from_name("kronos-email"),
     ],
     memory=16384,
 )
