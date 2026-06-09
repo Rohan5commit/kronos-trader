@@ -171,6 +171,9 @@ def run_trading_cycle():
     print(f"\nRunning predictions on {len(valid_data)} stocks...")
     predictor = KronosPredictor(model, tokenizer, device=str(device), max_context=512)
 
+    LOOKBACK = 400  # Must be < max_context (512) per Kronos design
+    PRED_LEN = 10
+
     predictions = {}
     symbols_list = list(valid_data.keys())
     batch_size = 32
@@ -180,20 +183,30 @@ def run_trading_cycle():
         for sym in batch:
             try:
                 df = valid_data[sym]
-                x_df = df.tail(520)
-                x_hist = x_df.iloc[:512][["open", "high", "low", "close", "volume"]].copy()
-                x_hist["amount"] = 0.0
-                x_timestamp = x_df.iloc[:512]["timestamp"]
-                y_timestamp = x_df.iloc[512:512+10]["timestamp"]
+                if len(df) < LOOKBACK + 10:
+                    continue
 
-                if len(y_timestamp) < 10:
+                x_hist = df.iloc[:LOOKBACK][["open", "high", "low", "close", "volume"]].copy()
+                x_hist["amount"] = 0.0
+                x_timestamp = df.iloc[:LOOKBACK]["timestamp"]
+
+                # Generate synthetic future timestamps (business day freq from last timestamp)
+                last_ts = x_timestamp.iloc[-1]
+                y_timestamp = pd.date_range(
+                    start=last_ts + pd.Timedelta(days=1),
+                    periods=PRED_LEN,
+                    freq="B",
+                )
+
+                # Validate no NaN
+                if x_hist.isnull().values.any():
                     continue
 
                 pred_df = predictor.predict(
                     df=x_hist,
                     x_timestamp=x_timestamp,
                     y_timestamp=y_timestamp,
-                    pred_len=10,
+                    pred_len=PRED_LEN,
                     T=0.8,
                     top_p=0.9,
                     sample_count=1,
@@ -212,7 +225,11 @@ def run_trading_cycle():
                     "confidence": confidence,
                     "pred_std_pct": pred_std / current_close,
                 }
+                if len(predictions) <= 5:
+                    print(f"  ✓ {sym}: return={predicted_return:+.2%}, conf={confidence:.3f}")
             except Exception as e:
+                if len(predictions) < 3:
+                    print(f"  ✗ {sym}: {type(e).__name__}: {e}")
                 continue
 
         if (i + batch_size) % 100 == 0:
