@@ -387,14 +387,17 @@ def _load_cached_data(cache_dir, pd_mod):
 
 
 def _update_latest_bars(api_keys, symbols, cached_data, cache_dir, requests_mod, pd_mod, num_bars=10):
-    """Fetch only latest bars and update cache."""
+    """Fetch only latest bars and update cache — parallelized."""
     key_idx = [0]
+    lock = __import__('threading').Lock()
     def get_key():
-        key = api_keys[key_idx[0] % len(api_keys)]
-        key_idx[0] += 1
-        return key
+        with lock:
+            key = api_keys[key_idx[0] % len(api_keys)]
+            key_idx[0] += 1
+            return key
 
-    for i, sym in enumerate(symbols):
+    updated = [0]
+    def _update_one(sym):
         key = get_key()
         try:
             resp = requests_mod.get(
@@ -404,7 +407,7 @@ def _update_latest_bars(api_keys, symbols, cached_data, cache_dir, requests_mod,
             )
             data = resp.json()
             if "values" not in data:
-                continue
+                return
             new_df = pd_mod.DataFrame(data["values"])
             new_df = new_df.rename(columns={"datetime": "timestamp"})
             new_df["timestamp"] = pd_mod.to_datetime(new_df["timestamp"])
@@ -417,9 +420,18 @@ def _update_latest_bars(api_keys, symbols, cached_data, cache_dir, requests_mod,
             combined.to_parquet(cache_dir / f"{sym}.parquet", index=False)
         except Exception:
             pass
-        if (i + 1) % 100 == 0:
-            print(f"  Updated {i+1}/{len(symbols)} stocks...")
-        time.sleep(0.1)
+        with lock:
+            updated[0] += 1
+            if updated[0] % 200 == 0:
+                print(f"  Updated {updated[0]}/{len(symbols)} stocks...")
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=32) as executor:
+        futures = {executor.submit(_update_one, s): s for s in symbols}
+        for f in as_completed(futures):
+            f.result()
+
+    print(f"  Updated {updated[0]}/{len(symbols)} stocks total")
 
 
 def _generate_signals(predictions, stock_data, np_mod):
