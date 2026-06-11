@@ -45,6 +45,7 @@ VOLUME_PATH = "/kronos-data"
 MODEL_CACHE = f"{VOLUME_PATH}/model"
 DATA_CACHE = f"{VOLUME_PATH}/ohlcv"
 DB_PATH = f"{VOLUME_PATH}/trades.db"
+CONTEXT_PATH = f"{VOLUME_PATH}/context.json"
 
 
 # =============================================================================
@@ -82,6 +83,19 @@ def run_trading_cycle(send_email=False):
         print("ERROR: No Twelve Data API keys found in secrets")
         return
     print(f"Loaded {len(API_KEYS)} API keys")
+
+    # =========================================================================
+    # 1b. READ PREVIOUS CONTEXT
+    # =========================================================================
+    prev_context = _read_context()
+    if prev_context:
+        print(f"Loaded previous run context from {prev_context.get('run_timestamp', '?')}")
+        prev_actions = prev_context.get("actions_this_run", {})
+        print(f"  Previous run: {prev_actions.get('total_buys', 0)} buys, {prev_actions.get('total_sells', 0)} sells")
+        prev_port = prev_context.get("portfolio", {})
+        print(f"  Previous portfolio: ${prev_port.get('total_value', 0):,.2f} ({prev_port.get('num_positions', 0)} positions)")
+    else:
+        print("No previous context found (first run)")
 
     # =========================================================================
     # 2. FETCH STOCK UNIVERSE
@@ -276,6 +290,11 @@ def run_trading_cycle(send_email=False):
         )
     else:
         print("Email not configured — skipping notification")
+
+    # =========================================================================
+    # 9. WRITE CONTEXT FOR NEXT RUN
+    # =========================================================================
+    _write_context(trade_actions, predictions, signals, summary, prev_context)
 
     vol.commit()
     print("\nTrading cycle complete.")
@@ -740,6 +759,74 @@ def _send_email(subject, body, sender_email, sender_password, recipient_email):
         print(f"Email sent to {recipient_email}")
     except Exception as e:
         print(f"Email error: {e}")
+
+
+# =============================================================================
+# CONTEXT (run-to-run memory)
+# =============================================================================
+def _read_context():
+    """Read previous run's context file. Returns dict or None."""
+    ctx_path = Path(CONTEXT_PATH)
+    if not ctx_path.exists():
+        return None
+    try:
+        with open(ctx_path) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _write_context(trade_actions, predictions, signals, summary, prev_context):
+    """Write context file for the next run. Overwrites previous."""
+    from datetime import datetime as _dt
+
+    # Summarize what happened this run
+    buys = [a for a in trade_actions if a.startswith("BUY")]
+    sells = [a for a in trade_actions if a.startswith("SELL")]
+
+    # Top predictions (why we bought what we bought)
+    top_buys = sorted(
+        [(s, p) for s, p in predictions.items() if p.get("predicted_return", 0) > 0],
+        key=lambda x: x[1].get("predicted_return", 0) * x[1].get("confidence", 0),
+        reverse=True,
+    )[:10]
+
+    # Top sells (why we sold what we sold)
+    top_sells = [a for a in trade_actions if a.startswith("SELL")][:10]
+
+    context = {
+        "run_timestamp": _dt.now().isoformat(),
+        "portfolio": {
+            "cash": summary.get("cash", 0),
+            "total_value": summary.get("total_value", 0),
+            "cumulative_pnl": summary.get("cumulative_pnl", 0),
+            "num_positions": summary.get("num_positions", 0),
+        },
+        "actions_this_run": {
+            "buys": buys,
+            "sells": sells,
+            "total_buys": len(buys),
+            "total_sells": len(sells),
+        },
+        "reasoning": {
+            "top_predictions": [
+                {
+                    "symbol": s,
+                    "return": round(p.get("predicted_return", 0), 4),
+                    "confidence": round(p.get("confidence", 0), 4),
+                }
+                for s, p in top_buys
+            ],
+            "sell_reasons": top_sells,
+        },
+        "previous_context": prev_context,
+    }
+
+    ctx_path = Path(CONTEXT_PATH)
+    ctx_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(ctx_path, "w") as f:
+        json.dump(context, f, indent=2)
+    print(f"Context written for next run")
 
 
 # =============================================================================
