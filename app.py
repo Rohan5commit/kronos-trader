@@ -54,7 +54,7 @@ DB_PATH = f"{VOLUME_PATH}/trades.db"
     image=image,
     volumes={VOLUME_PATH: vol},
     gpu="T4",
-    timeout=1800,
+    timeout=3600,
     secrets=[
         modal.Secret.from_name("kronos-twelve-data"),
         modal.Secret.from_name("kronos-email"),
@@ -743,7 +743,7 @@ def _send_email(subject, body, sender_email, sender_password, recipient_email):
         modal.Secret.from_name("kronos-email"),
     ],
     schedule=modal.Cron("30 9 * * 1-5"),
-    timeout=1800,
+    timeout=3600,
 )
 def pre_market_run():
     """Pre-market: fetch data + predict + trade, 9:30 AM ET weekdays."""
@@ -758,7 +758,7 @@ def pre_market_run():
         modal.Secret.from_name("kronos-email"),
     ],
     schedule=modal.Cron("45 15 * * 1-5"),
-    timeout=1800,
+    timeout=3600,
 )
 def post_market_run():
     """Post-market: update data + rebalance + email report, 3:45 PM ET weekdays."""
