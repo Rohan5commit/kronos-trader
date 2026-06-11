@@ -107,7 +107,16 @@ def run_trading_cycle(send_email=False):
 
     cached_data = _load_cached_data(data_cache_dir, pd)
     symbols_to_fetch = [s for s in all_symbols if s not in cached_data]
-    symbols_to_update = [s for s in all_symbols if s in cached_data]
+
+    # Only update stocks whose data is older than today
+    from datetime import timedelta
+    today = pd.Timestamp.now().normalize()
+    symbols_to_update = []
+    for s in all_symbols:
+        if s in cached_data:
+            last_date = cached_data[s]["timestamp"].max()
+            if pd.Timestamp(last_date).normalize() < today:
+                symbols_to_update.append(s)
 
     print(f"\nData status: {len(cached_data)} cached, {len(symbols_to_fetch)} new, {len(symbols_to_update)} to update")
 
@@ -124,9 +133,11 @@ def run_trading_cycle(send_email=False):
             print(f"  Committed {len(new_data)} stocks to volume")
 
     if symbols_to_update:
-        print(f"\nUpdating {len(symbols_to_update)} stocks with latest bars...")
+        print(f"\nUpdating {len(symbols_to_update)} stale stocks with latest bars...")
         _update_latest_bars(API_KEYS, symbols_to_update, cached_data, data_cache_dir, requests, pd)
         vol.commit()
+    else:
+        print("\nAll data is fresh — skipping update")
 
     valid_data = {
         s: df for s, df in cached_data.items()
