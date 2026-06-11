@@ -61,7 +61,7 @@ DB_PATH = f"{VOLUME_PATH}/trades.db"
     ],
     memory=16384,
 )
-def run_trading_cycle(send_email=False):
+def run_trading_cycle(send_email=False, skip_update=False):
     """Main trading cycle — fetches data, runs inference, trades, emails report."""
     import torch
     import numpy as np
@@ -132,10 +132,12 @@ def run_trading_cycle(send_email=False):
             vol.commit()
             print(f"  Committed {len(new_data)} stocks to volume")
 
-    if symbols_to_update:
+    if symbols_to_update and not skip_update:
         print(f"\nUpdating {len(symbols_to_update)} stale stocks with latest bars...")
         _update_latest_bars(API_KEYS, symbols_to_update, cached_data, data_cache_dir, requests, pd)
         vol.commit()
+    elif skip_update:
+        print("\nSkipping update (pre-market run)")
     else:
         print("\nAll data is fresh — skipping update")
 
@@ -774,7 +776,7 @@ def _send_email(subject, body, sender_email, sender_password, recipient_email):
 )
 def pre_market_run():
     """Pre-market: fetch data + predict + trade, 9:30 AM ET weekdays."""
-    run_trading_cycle.local()
+    run_trading_cycle.local(skip_update=True)
 
 
 @app.function(
