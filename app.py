@@ -786,8 +786,27 @@ def post_market_run():
     schedule=modal.Cron("0 8 * * 1-5"),
     timeout=3600,
 )
-def update_data():
-    """Update latest bars for all cached stocks. Runs daily 8:00 AM ET."""
+def update_data_morning():
+    """Update latest bars for all cached stocks. Runs daily 8:00 AM ET before pre-market."""
+    _run_data_update()
+
+
+@app.function(
+    image=image,
+    volumes={VOLUME_PATH: vol},
+    secrets=[
+        modal.Secret.from_name("kronos-twelve-data"),
+    ],
+    schedule=modal.Cron("0 15 * * 1-5"),
+    timeout=3600,
+)
+def update_data_afternoon():
+    """Update latest bars for all cached stocks. Runs daily 3:00 PM ET before post-market."""
+    _run_data_update()
+
+
+def _run_data_update():
+    """Shared data update logic."""
     import pandas as pd
     import requests as req
 
