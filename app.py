@@ -738,6 +738,10 @@ def _send_email(subject, body, sender_email, sender_password, recipient_email):
 @app.function(
     image=image,
     volumes={VOLUME_PATH: vol},
+    secrets=[
+        modal.Secret.from_name("kronos-twelve-data"),
+        modal.Secret.from_name("kronos-email"),
+    ],
     schedule=modal.Cron("30 9 * * 1-5"),
 )
 def pre_market_run():
@@ -748,6 +752,10 @@ def pre_market_run():
 @app.function(
     image=image,
     volumes={VOLUME_PATH: vol},
+    secrets=[
+        modal.Secret.from_name("kronos-twelve-data"),
+        modal.Secret.from_name("kronos-email"),
+    ],
     schedule=modal.Cron("45 15 * * 1-5"),
 )
 def post_market_run():
