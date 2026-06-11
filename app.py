@@ -141,6 +141,9 @@ def run_trading_cycle(send_email=False, skip_update=False):
     else:
         print("\nAll data is fresh — skipping update")
 
+    if not symbols_to_fetch and not symbols_to_update:
+        print("\nAll data is fresh — skipping update")
+
     valid_data = {
         s: df for s, df in cached_data.items()
         if len(df) >= 100
@@ -791,4 +794,4 @@ def pre_market_run():
 )
 def post_market_run():
     """Post-market: update data + rebalance + email report, 3:45 PM ET weekdays."""
-    run_trading_cycle.local(send_email=True)
+    run_trading_cycle.local(send_email=True, skip_update=True)
