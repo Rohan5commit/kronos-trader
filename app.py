@@ -61,7 +61,7 @@ DB_PATH = f"{VOLUME_PATH}/trades.db"
     ],
     memory=16384,
 )
-def run_trading_cycle(send_email=False, skip_update=False):
+def run_trading_cycle(send_email=False):
     """Main trading cycle — fetches data, runs inference, trades, emails report."""
     import torch
     import numpy as np
@@ -108,17 +108,7 @@ def run_trading_cycle(send_email=False, skip_update=False):
     cached_data = _load_cached_data(data_cache_dir, pd)
     symbols_to_fetch = [s for s in all_symbols if s not in cached_data]
 
-    # Only update stocks whose data is older than today
-    from datetime import timedelta
-    today = pd.Timestamp.now().normalize()
-    symbols_to_update = []
-    for s in all_symbols:
-        if s in cached_data:
-            last_date = cached_data[s]["timestamp"].max()
-            if pd.Timestamp(last_date).normalize() < today:
-                symbols_to_update.append(s)
-
-    print(f"\nData status: {len(cached_data)} cached, {len(symbols_to_fetch)} new, {len(symbols_to_update)} to update")
+    print(f"\nData status: {len(cached_data)} cached, {len(symbols_to_fetch)} new")
 
     if symbols_to_fetch:
         print(f"\nFetching {len(symbols_to_fetch)} new stocks in batches of 200...")
@@ -131,18 +121,6 @@ def run_trading_cycle(send_email=False, skip_update=False):
                 cached_data[sym] = df
             vol.commit()
             print(f"  Committed {len(new_data)} stocks to volume")
-
-    if symbols_to_update and not skip_update:
-        print(f"\nUpdating {len(symbols_to_update)} stale stocks with latest bars...")
-        _update_latest_bars(API_KEYS, symbols_to_update, cached_data, data_cache_dir, requests, pd)
-        vol.commit()
-    elif skip_update:
-        print("\nSkipping update (pre-market run)")
-    else:
-        print("\nAll data is fresh — skipping update")
-
-    if not symbols_to_fetch and not symbols_to_update:
-        print("\nAll data is fresh — skipping update")
 
     valid_data = {
         s: df for s, df in cached_data.items()
@@ -779,8 +757,8 @@ def _send_email(subject, body, sender_email, sender_password, recipient_email):
     gpu="T4",
 )
 def pre_market_run():
-    """Pre-market: fetch data + predict + trade, 9:30 AM ET weekdays."""
-    run_trading_cycle.local(skip_update=True)
+    """Pre-market: predict + trade, 9:30 AM ET weekdays."""
+    run_trading_cycle.local()
 
 
 @app.function(
@@ -795,5 +773,50 @@ def pre_market_run():
     gpu="T4",
 )
 def post_market_run():
-    """Post-market: update data + rebalance + email report, 3:45 PM ET weekdays."""
-    run_trading_cycle.local(send_email=True, skip_update=True)
+    """Post-market: predict + rebalance + email report, 3:45 PM ET weekdays."""
+    run_trading_cycle.local(send_email=True)
+
+
+@app.function(
+    image=image,
+    volumes={VOLUME_PATH: vol},
+    secrets=[
+        modal.Secret.from_name("kronos-twelve-data"),
+    ],
+    schedule=modal.Cron("0 8 * * 1-5"),
+    timeout=3600,
+)
+def update_data():
+    """Update latest bars for all cached stocks. Runs daily 8:00 AM ET."""
+    import pandas as pd
+    import requests as req
+
+    print(f"\n{'='*60}")
+    print(f"  DATA UPDATE — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{'='*60}\n")
+
+    keys_raw = os.environ.get("TWELVE_DATA_KEYS", "[]")
+    API_KEYS = json.loads(keys_raw) if keys_raw else []
+    if not API_KEYS:
+        print("ERROR: No API keys found")
+        return
+    print(f"Loaded {len(API_KEYS)} API keys")
+
+    stock_list_path = Path(VOLUME_PATH) / "stocks.json"
+    if not stock_list_path.exists():
+        print("ERROR: No stocks.json — run trading cycle first")
+        return
+    with open(stock_list_path) as f:
+        all_symbols = json.load(f)
+    print(f"Loaded {len(all_symbols)} symbols")
+
+    data_cache_dir = Path(DATA_CACHE)
+    data_cache_dir.mkdir(parents=True, exist_ok=True)
+    cached_data = _load_cached_data(data_cache_dir, pd)
+
+    symbols_to_update = [s for s in all_symbols if s in cached_data]
+    print(f"Updating {len(symbols_to_update)} stocks...")
+
+    _update_latest_bars(API_KEYS, symbols_to_update, cached_data, data_cache_dir, req, pd)
+    vol.commit()
+    print(f"\nData update complete. Updated {len(symbols_to_update)} stocks.")
