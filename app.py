@@ -579,18 +579,34 @@ def _load_cached_data(cache_dir, pd_mod):
 
 
 def _update_latest_bars(api_keys, symbols, cached_data, cache_dir, requests_mod, pd_mod, num_bars=10):
-    """Fetch only latest bars and update cache — parallelized."""
-    key_idx = [0]
-    lock = __import__('threading').Lock()
-    def get_key():
-        with lock:
-            key = api_keys[key_idx[0] % len(api_keys)]
-            key_idx[0] += 1
-            return key
+    """Fetch only latest bars and update cache — rate-limited to respect API limits."""
+    import threading
+    import time as _time
+
+    # Rate limit: 8 calls/min/key, 8 keys = 64 calls/min total
+    # Use 8 workers with a per-key cooldown of 8s (60/8 = 7.5s per key cycle)
+    key_last_used = {k: 0.0 for k in api_keys}
+    lock = threading.Lock()
+
+    def get_key_throttled():
+        while True:
+            with lock:
+                now = _time.time()
+                best_key = None
+                best_wait = float('inf')
+                for k in api_keys:
+                    wait = max(0, 7.5 - (now - key_last_used[k]))
+                    if wait < best_wait:
+                        best_wait = wait
+                        best_key = k
+                if best_wait <= 0.1:
+                    key_last_used[best_key] = now
+                    return best_key
+            _time.sleep(0.5)
 
     updated = [0]
     def _update_one(sym):
-        key = get_key()
+        key = get_key_throttled()
         try:
             resp = requests_mod.get(
                 "https://api.twelvedata.com/time_series",
@@ -618,7 +634,7 @@ def _update_latest_bars(api_keys, symbols, cached_data, cache_dir, requests_mod,
                 print(f"  Updated {updated[0]}/{len(symbols)} stocks...")
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    with ThreadPoolExecutor(max_workers=32) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         futures = {executor.submit(_update_one, s): s for s in symbols}
         for f in as_completed(futures):
             f.result()
