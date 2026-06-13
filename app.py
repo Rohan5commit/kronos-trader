@@ -333,6 +333,10 @@ class _Portfolio:
                 );
                 CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT);
             """)
+            # Migration: add last_prediction column if missing
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(positions)").fetchall()]
+            if "last_prediction" not in cols:
+                conn.execute("ALTER TABLE positions ADD COLUMN last_prediction REAL DEFAULT 0")
             existing = conn.execute("SELECT value FROM state WHERE key='cash'").fetchone()
             if not existing:
                 conn.execute("INSERT INTO state (key, value) VALUES ('cash', ?)", (str(self.initial_cash),))
