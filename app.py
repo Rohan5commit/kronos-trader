@@ -504,9 +504,12 @@ class _Portfolio:
                 continue
             conf = pred.get("confidence", 0)
             ret = pred.get("predicted_return", 0)
-            conf_mult = min(conf / 0.05, 1.0)
-            position_pct = 0.01 + 0.04 * conf_mult
-            position_value = min(total_value * position_pct, cash * 0.95)
+
+            # Model-driven allocation: score determines position size
+            # Higher return * confidence = larger position (up to 20% of portfolio)
+            position_pct = min(score / (score + 1.0), 0.20)
+            position_value = total_value * position_pct
+            position_value = min(position_value, cash * 0.95)
             shares = int(position_value / price)
             if shares > 0:
                 if self.buy(sym, price, shares, "model_buy", predicted_return=ret):
