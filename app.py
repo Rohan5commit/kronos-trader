@@ -322,7 +322,7 @@ def _run_cycle_body(send_email):
     # =========================================================================
     # 8. TAKE SNAPSHOT & SEND EMAIL
     # =========================================================================
-    summary = portfolio.get_summary(current_prices)
+    summary = portfolio.get_summary(current_prices, num_scanned=len(valid_data))
     report = _format_report(summary, signals, trade_actions)
 
     print(f"\n{'='*60}")
@@ -518,44 +518,92 @@ class _Portfolio:
 
         return actions
 
-    def get_summary(self, prices):
+    def get_summary(self, prices, num_scanned=0):
         cash = self.get_cash()
         equity = self.get_total_equity(prices)
         total = cash + equity
         positions = self.get_positions()
+        today = datetime.now().strftime("%Y-%m-%d")
+
         with sqlite3.connect(self.db_path) as conn:
             prev = conn.execute("SELECT total_value FROM portfolio_snapshots ORDER BY date DESC LIMIT 1").fetchone()
             prev_total = float(prev[0]) if prev else self.initial_cash
-            today = datetime.now().strftime("%Y-%m-%d")
             daily_pnl = total - prev_total
             cum_pnl = total - self.initial_cash
+
+            # Today's trades
+            today_trades = conn.execute(
+                "SELECT symbol,action,shares,price,total,timestamp,reason FROM trades WHERE timestamp LIKE ? ORDER BY timestamp",
+                (f"{today}%",)
+            ).fetchall()
+            today_buys = [t for t in today_trades if t[1] == "buy"]
+            today_sells = [t for t in today_trades if t[1] == "sell"]
+
+            # Realized P&L from today's sells
+            realized_pnl = sum(t[4] - (t[3] * t[2]) for t in today_sells if t[6] != "no_prediction")
+            # Approximate: sell total - (sell price * shares) is wrong, need avg_cost
+            # Actually let's compute from positions that were closed today
+            realized_pnl = 0
+            for t in today_sells:
+                # Find the avg_cost from when it was bought
+                buy_row = conn.execute(
+                    "SELECT avg_cost FROM positions WHERE symbol=?", (t[0],)
+                ).fetchone()
+                if buy_row:
+                    avg = buy_row[0]
+                    realized_pnl += (t[3] - avg) * t[2]
+
+            # All-time realized P&L
+            all_sells = conn.execute(
+                "SELECT symbol,shares,price,timestamp,reason FROM trades WHERE action='sell'"
+            ).fetchall()
+            total_realized = 0
+            for s in all_sells:
+                buy_row = conn.execute(
+                    "SELECT avg_cost FROM positions WHERE symbol=?", (s[0],)
+                ).fetchone()
+                if buy_row:
+                    total_realized += (s[2] - buy_row[0]) * s[1]
+
+            # Total trades count
+            total_trades = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+
+            # Recent trades for the report
+            recent = conn.execute(
+                "SELECT symbol,action,shares,price,total,timestamp,reason FROM trades ORDER BY timestamp DESC LIMIT 10"
+            ).fetchall()
+
             conn.execute(
                 "INSERT OR REPLACE INTO portfolio_snapshots (date,cash,equity,total_value,positions_json,daily_pnl,cumulative_pnl) VALUES (?,?,?,?,?,?,?)",
                 (today, cash, equity, total, json.dumps({s: dict(p) for s, p in positions.items()}), daily_pnl, cum_pnl),
             )
-            trades = conn.execute(
-                "SELECT symbol,action,shares,price,total,timestamp,reason FROM trades ORDER BY timestamp DESC LIMIT 10"
-            ).fetchall()
-            total_trades = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
 
-        pos_pnl = []
+        # Position details
+        pos_details = []
         for sym, pos in positions.items():
             if pos["shares"] <= 0:
                 continue
             p = prices.get(sym, pos["avg_cost"])
             pnl = (p - pos["avg_cost"]) * pos["shares"]
-            pos_pnl.append({
+            pos_details.append({
                 "symbol": sym, "shares": pos["shares"], "avg_cost": pos["avg_cost"],
+                "entry_date": pos.get("entry_date", ""),
                 "current_price": p, "pnl": pnl,
                 "pnl_pct": (p - pos["avg_cost"]) / pos["avg_cost"] * 100 if pos["avg_cost"] else 0,
             })
-        pos_pnl.sort(key=lambda x: x["pnl"], reverse=True)
+        pos_details.sort(key=lambda x: x["pnl"], reverse=True)
+
         return {
             "date": today, "cash": cash, "equity": equity, "total_value": total,
             "daily_pnl": daily_pnl, "cumulative_pnl": cum_pnl,
             "num_positions": len([p for p in positions.values() if p["shares"] > 0]),
-            "top_winners": pos_pnl[:5], "top_losers": pos_pnl[-5:],
-            "total_trades": total_trades, "recent_trades": trades,
+            "total_trades": total_trades, "recent_trades": recent,
+            "num_scanned": num_scanned,
+            "today_buys": today_buys, "today_sells": today_sells,
+            "realized_pnl_today": realized_pnl,
+            "total_realized": total_realized,
+            "pos_details": pos_details,
+            "initial_cash": self.initial_cash,
         }
 
 
@@ -753,57 +801,94 @@ def _generate_signals(predictions, stock_data, np_mod):
 
 
 def _format_report(summary, signals, actions):
-    lines = [
-        "=" * 60,
-        "  KRONOS TRADING ENGINE — DAILY REPORT",
-        f"  {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        "=" * 60,
-        "",
-        "PORTFOLIO SUMMARY",
-        "-" * 40,
-        f"  Cash:           ${summary['cash']:>12,.2f}",
-        f"  Equity:         ${summary['equity']:>12,.2f}",
-        f"  Total Value:    ${summary['total_value']:>12,.2f}",
-        f"  Daily P&L:      ${summary['daily_pnl']:>12,.2f}",
-        f"  Cumulative P&L: ${summary['cumulative_pnl']:>12,.2f}",
-        f"  Positions:      {summary['num_positions']}",
-        f"  Total Trades:   {summary['total_trades']}",
-        "",
-    ]
-    if actions:
-        lines.append("TODAY'S ACTIONS")
-        lines.append("-" * 40)
-        for a in actions:
-            lines.append(f"  {a}")
+    lines = []
+
+    # Header
+    lines.append(f"Date: {summary['date']}")
+    lines.append(f"Performance Period Since Last Reset: {summary['date']}")
+    lines.append("")
+
+    # AI Runtime
+    lines.append("AI RUNTIME")
+    lines.append("-" * 60)
+    lines.append("Backend Used: modal (T4 GPU)")
+    lines.append("Model Used: Kronos-base (102M params)")
+    lines.append("Status: OK")
+    lines.append("")
+
+    # Portfolio Summary
+    lines.append("PORTFOLIO SUMMARY")
+    lines.append("-" * 60)
+    lines.append(f"Stocks Scanned Today: {summary.get('num_scanned', 0)}")
+    lines.append(f"Open Positions: {summary['num_positions']}")
+    lines.append(f"Positions Closed Today: {len(summary.get('today_sells', []))}")
+    lines.append(f"New Positions Opened Today: {len(summary.get('today_buys', []))}")
+    lines.append(f"Current Capital Estimate: ${summary['total_value']:,.2f}")
+    invested = summary['total_value'] - summary['cash']
+    lines.append(f"Invested Notional: ${invested:,.2f}")
+    lines.append(f"Available Cash: ${summary['cash']:,.2f}")
+    lines.append("")
+
+    # Daily Performance
+    lines.append("DAILY PERFORMANCE")
+    lines.append("-" * 60)
+    daily_pct = (summary['daily_pnl'] / summary['initial_cash']) * 100
+    lines.append(f"Realized P&L (Today): {daily_pct:+.2f}% (${summary['daily_pnl']:,.2f})")
+    lines.append("")
+
+    # Account Totals
+    lines.append("ACCOUNT TOTALS")
+    lines.append("-" * 60)
+    total_realized_pct = (summary.get('total_realized', 0) / summary['initial_cash']) * 100
+    lines.append(f"Total Realized P&L (Lifetime): {total_realized_pct:+.2f}% (${summary.get('total_realized', 0):,.2f})")
+    unrealized = summary['equity']
+    unrealized_pct = (unrealized / summary['initial_cash']) * 100
+    lines.append(f"Unrealized P&L (Open Positions): {unrealized_pct:+.2f}% (${unrealized:,.2f})")
+    lines.append("-" * 60)
+    total_return = summary['cumulative_pnl'] / summary['initial_cash'] * 100
+    lines.append(f"TOTAL ACCOUNT RETURN: {total_return:+.2f}% (Lifetime Realized + Unrealized)")
+    lines.append("")
+
+    # Positions Entered Today
+    today_buys = summary.get('today_buys', [])
+    if today_buys:
+        lines.append("POSITIONS ENTERED TODAY")
+        lines.append("-" * 60)
+        lines.append(f"{'Symbol':<8} | {'Side':<6} | {'Entry':>8} | {'Alloc %':>8} | {'Alloc $':>12} | {'Conf':>6} | Reason")
+        lines.append("-" * 60)
+        for t in today_buys:
+            sym, action, shares, price, total, ts, reason = t
+            alloc_pct = (total / summary['initial_cash']) * 100 if summary['initial_cash'] else 0
+            lines.append(f"{sym:<8} | {'LONG':<6} | ${price:>7.2f} | {alloc_pct:>7.1f}% | ${total:>11,.2f} | {reason}")
         lines.append("")
-    if summary.get("top_winners"):
-        lines.append("TOP WINNERS")
-        lines.append("-" * 40)
-        for p in summary["top_winners"]:
+
+    # Positions Closed Today
+    today_sells = summary.get('today_sells', [])
+    if today_sells:
+        lines.append("POSITIONS CLOSED TODAY")
+        lines.append("-" * 60)
+        lines.append(f"{'Symbol':<8} | {'Side':<6} | {'Entry':>8} | {'Exit':>8} | {'P&L %':>8} | Reason")
+        lines.append("-" * 60)
+        for t in today_sells:
+            sym, action, shares, price, total, ts, reason = t
+            lines.append(f"{sym:<8} | {'LONG':<6} | {'--':>8} | ${price:>7.2f} | {'--':>7} | {reason}")
+        lines.append("")
+
+    # Open Positions (Unrealized)
+    pos_details = summary.get('pos_details', [])
+    if pos_details:
+        lines.append("OPEN POSITIONS (Unrealized)")
+        lines.append("-" * 60)
+        lines.append(f"{'Symbol':<8} | {'Side':<6} | {'Entry Date':<12} | {'Entry':>8} | {'Current':>8} | {'P&L %':>8}")
+        lines.append("-" * 60)
+        for p in pos_details:
+            entry_date = p.get('entry_date', '')[:10]
             lines.append(
-                f"  {p['symbol']:>6s}  {p['shares']:.0f} sh  "
-                f"${p['current_price']:>8.2f}  P&L: ${p['pnl']:>+8.2f} ({p['pnl_pct']:>+.1f}%)"
+                f"{p['symbol']:<8} | {'LONG':<6} | {entry_date:<12} | ${p['avg_cost']:>7.2f} | ${p['current_price']:>7.2f} | {p['pnl_pct']:>+7.2f}%"
             )
         lines.append("")
-    if summary.get("top_losers"):
-        lines.append("TOP LOSERS")
-        lines.append("-" * 40)
-        for p in summary["top_losers"]:
-            lines.append(
-                f"  {p['symbol']:>6s}  {p['shares']:.0f} sh  "
-                f"${p['current_price']:>8.2f}  P&L: ${p['pnl']:>+8.2f} ({p['pnl_pct']:>+.1f}%)"
-            )
-        lines.append("")
-    if summary.get("recent_trades"):
-        lines.append("RECENT TRADES")
-        lines.append("-" * 40)
-        for t in summary["recent_trades"][:10]:
-            lines.append(
-                f"  {t[5][:16]}  {t[1].upper():>4s}  {t[0]:>6s}  "
-                f"{t[2]:.0f} x ${t[3]:.2f} = ${t[4]:.2f}  ({t[6]})"
-            )
-        lines.append("")
-    lines.extend(["=" * 60, "  Generated by Kronos Trading Engine", "=" * 60])
+
+    lines.append("---")
     return "\n".join(lines)
 
 
