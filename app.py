@@ -841,11 +841,11 @@ def _format_report(summary, signals, actions):
     lines.append("-" * 60)
     total_realized_pct = (summary.get('total_realized', 0) / summary['initial_cash']) * 100
     lines.append(f"Total Realized P&L (Lifetime): {total_realized_pct:+.2f}% (${summary.get('total_realized', 0):,.2f})")
-    unrealized = summary['equity']
+    unrealized = sum(p["pnl"] for p in summary.get('pos_details', []))
     unrealized_pct = (unrealized / summary['initial_cash']) * 100
     lines.append(f"Unrealized P&L (Open Positions): {unrealized_pct:+.2f}% (${unrealized:,.2f})")
     lines.append("-" * 60)
-    total_return = summary['cumulative_pnl'] / summary['initial_cash'] * 100
+    total_return = (summary.get('total_realized', 0) + unrealized) / summary['initial_cash'] * 100
     lines.append(f"TOTAL ACCOUNT RETURN: {total_return:+.2f}% (Lifetime Realized + Unrealized)")
     lines.append("")
 
