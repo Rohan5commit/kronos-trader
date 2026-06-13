@@ -843,7 +843,7 @@ def _write_context(trade_actions, predictions, signals, summary, prev_context):
         modal.Secret.from_name("kronos-twelve-data"),
         modal.Secret.from_name("kronos-email"),
     ],
-    schedule=modal.Cron("30 9 * * 1-5"),
+    schedule=modal.Cron("30 13 * * 1-5"),
     timeout=3600,
     gpu="T4",
 )
@@ -859,7 +859,7 @@ def pre_market_run():
         modal.Secret.from_name("kronos-twelve-data"),
         modal.Secret.from_name("kronos-email"),
     ],
-    schedule=modal.Cron("45 15 * * 1-5"),
+    schedule=modal.Cron("45 19 * * 1-5"),
     timeout=3600,
     gpu="T4",
 )
@@ -874,7 +874,7 @@ def post_market_run():
     secrets=[
         modal.Secret.from_name("kronos-twelve-data"),
     ],
-    schedule=modal.Cron("0 8 * * 1-5"),
+    schedule=modal.Cron("0 12 * * 1-5"),
     timeout=3600,
 )
 def update_data_morning():
@@ -888,7 +888,7 @@ def update_data_morning():
     secrets=[
         modal.Secret.from_name("kronos-twelve-data"),
     ],
-    schedule=modal.Cron("0 15 * * 1-5"),
+    schedule=modal.Cron("0 19 * * 1-5"),
     timeout=3600,
 )
 def update_data_afternoon():
