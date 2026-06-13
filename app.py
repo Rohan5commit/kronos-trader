@@ -263,8 +263,8 @@ def _run_cycle_body(send_email):
 
                 predicted_return = (predicted_close - current_close) / current_close
 
-                # Cap unrealistic predictions (no stock reliably doubles in 10 days)
-                predicted_return = max(-0.50, min(1.00, predicted_return))
+                # Cap predictions at ±20%
+                predicted_return = max(-0.20, min(0.20, predicted_return))
 
                 pred_std = float(pred_df["close"].std())
                 confidence = abs(predicted_return) / (pred_std / current_close + 1e-8)
@@ -506,9 +506,8 @@ class _Portfolio:
             ret = pred.get("predicted_return", 0)
             conf_mult = min(conf / 0.05, 1.0)
             position_pct = 0.01 + 0.04 * conf_mult
-            position_value = min(total_value * position_pct, cash * 0.95, 5000)
+            position_value = min(total_value * position_pct, cash * 0.95)
             shares = int(position_value / price)
-            shares = min(shares, 10000)
             if shares > 0:
                 if self.buy(sym, price, shares, "model_buy", predicted_return=ret):
                     actions.append(f"BUY {sym} x{shares} (ret={ret:+.2%}, conf={conf:.3f})")
@@ -582,7 +581,7 @@ def _fetch_stock_universe(api_keys, requests_mod):
         except Exception as e:
             print(f"Error fetching {exchange}: {e}")
         time.sleep(1)
-    return symbols[:1200]
+    return symbols[:1000]
 
 
 def _fetch_ohlcv_batch(api_keys, symbols, requests_mod, pd_mod, outputsize=600):
