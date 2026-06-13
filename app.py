@@ -256,9 +256,23 @@ def _run_cycle_body(send_email):
 
                 current_close = float(df.iloc[-1]["close"])
                 predicted_close = float(pred_df["close"].iloc[-1])
+
+                # Skip penny stocks — unreliable predictions
+                if current_close < 1.0:
+                    continue
+
                 predicted_return = (predicted_close - current_close) / current_close
+
+                # Cap unrealistic predictions (no stock reliably doubles in 10 days)
+                predicted_return = max(-0.50, min(1.00, predicted_return))
+
                 pred_std = float(pred_df["close"].std())
                 confidence = abs(predicted_return) / (pred_std / current_close + 1e-8)
+
+                # Skip if prediction is too noisy
+                pred_std_pct = pred_std / current_close
+                if pred_std_pct > 0.15:
+                    continue
 
                 predictions[sym] = {
                     "current_close": current_close,
@@ -486,14 +500,15 @@ class _Portfolio:
             if cash < 100:
                 break
             price = current_prices.get(sym, pred.get("current_close", 0))
-            if price <= 0:
+            if price <= 1.0:
                 continue
             conf = pred.get("confidence", 0)
             ret = pred.get("predicted_return", 0)
             conf_mult = min(conf / 0.05, 1.0)
             position_pct = 0.01 + 0.04 * conf_mult
-            position_value = min(total_value * position_pct, cash * 0.95)
+            position_value = min(total_value * position_pct, cash * 0.95, 5000)
             shares = int(position_value / price)
+            shares = min(shares, 10000)
             if shares > 0:
                 if self.buy(sym, price, shares, "model_buy", predicted_return=ret):
                     actions.append(f"BUY {sym} x{shares} (ret={ret:+.2%}, conf={conf:.3f})")
@@ -705,8 +720,10 @@ def _generate_signals(predictions, stock_data, np_mod):
         predicted_return = pred.get("predicted_return", 0)
         confidence = pred.get("confidence", 0)
         pred_std_pct = pred.get("pred_std_pct", 0)
+        current_close = pred.get("current_close", 0)
 
-        if confidence < 0.005 or pred_std_pct > 0.08:
+        # Skip penny stocks and high-noise predictions
+        if current_close < 1.0 or confidence < 0.005 or pred_std_pct > 0.08:
             continue
 
         vol_score = 1.0 / (pred_std_pct + 0.01)
