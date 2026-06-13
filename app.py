@@ -333,6 +333,8 @@ def _run_cycle_body(send_email):
     password = os.environ.get("KRONOS_EMAIL_PASSWORD", "")
     recipient = os.environ.get("KRONOS_RECIPIENT", sender)
 
+    print(f"\nEmail check: send_email={send_email}, sender={'SET' if sender else 'EMPTY'}, password={'SET' if password else 'EMPTY'}, recipient={'SET' if recipient else 'EMPTY'}")
+
     if send_email and sender and password and recipient:
         _send_email(
             subject=f"Kronos Report — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
@@ -898,7 +900,7 @@ def _send_email(subject, body, sender_email, sender_password, recipient_email):
         msg["From"] = sender_email
         msg["To"] = recipient_email
         msg["Subject"] = subject
-        msg.attach(MIMEText(f"<pre>{body}</pre>", "html"))
+        msg.attach(MIMEText(body, "plain"))
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
             server.starttls()
             server.login(sender_email, sender_password)
