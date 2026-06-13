@@ -74,6 +74,40 @@ def run_trading_cycle(send_email=False):
     print(f"  KRONOS TRADING ENGINE — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}\n")
 
+    try:
+        _run_cycle_body(send_email)
+    except Exception as e:
+        print(f"\nFATAL ERROR: {type(e).__name__}: {e}")
+        print("Attempting to send error report email...")
+        if send_email:
+            try:
+                sender = os.environ.get("KRONOS_EMAIL", "")
+                password = os.environ.get("KRONOS_EMAIL_PASSWORD", "")
+                recipient = os.environ.get("KRONOS_RECIPIENT", sender)
+                if sender and password and recipient:
+                    _send_email(
+                        subject=f"Kronos ERROR — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                        body=f"FATAL ERROR in trading cycle:\n\n{type(e).__name__}: {e}\n\nCheck Modal logs for details.",
+                        sender_email=sender,
+                        sender_password=password,
+                        recipient_email=recipient,
+                    )
+            except Exception:
+                pass
+        raise
+
+
+def _run_cycle_body(send_email):
+    """Inner trading cycle — separated so outer wrapper can catch all errors."""
+    import torch
+    import numpy as np
+    import pandas as pd
+    import requests
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # =========================================================================
+    # 1. LOAD API KEYS
+
     # =========================================================================
     # 1. LOAD API KEYS
     # =========================================================================
@@ -258,13 +292,18 @@ def run_trading_cycle(send_email=False):
     # =========================================================================
     print("\nExecuting trades (model-driven)...")
     current_prices = {s: p["current_close"] for s, p in predictions.items()}
+    trade_actions = []
 
     portfolio = _Portfolio(DB_PATH, initial_cash=100_000.0)
-    trade_actions = portfolio.manage_positions(
-        predictions, current_prices,
-        max_positions=50,
-        min_confidence=0.005,
-    )
+    try:
+        trade_actions = portfolio.manage_positions(
+            predictions, current_prices,
+            max_positions=50,
+            min_confidence=0.005,
+        )
+    except Exception as e:
+        print(f"ERROR in trading: {type(e).__name__}: {e}")
+        print("Continuing to email report with pre-trade state...")
 
     # =========================================================================
     # 8. TAKE SNAPSHOT & SEND EMAIL
