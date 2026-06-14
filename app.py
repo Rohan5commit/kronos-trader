@@ -1,6 +1,6 @@
 """
 Kronos Paper Trading Engine — Modal Serverless
-Runs 2x/day on T4 GPU, fetches 1000 US stocks, predicts with Kronos, trades autonomously.
+Runs 2x/day on T4 GPU, fetches 1000 US stocks, predicts with Kronos, trades via Alpaca.
 """
 import os
 import json
@@ -32,6 +32,7 @@ image = (
         "safetensors==0.6.2",
         "requests",
         "pyarrow",
+        "alpaca-py",
     )
     .apt_install("git")
     .run_commands(
@@ -59,11 +60,12 @@ CONTEXT_PATH = f"{VOLUME_PATH}/context.json"
     secrets=[
         modal.Secret.from_name("kronos-twelve-data"),
         modal.Secret.from_name("kronos-email"),
+        modal.Secret.from_name("kronos-alpaca"),
     ],
     memory=16384,
 )
 def run_trading_cycle(send_email=False):
-    """Main trading cycle — fetches data, runs inference, trades, emails report."""
+    """Main trading cycle — fetches data, runs inference, trades via Alpaca, emails report."""
     import torch
     import numpy as np
     import pandas as pd
@@ -302,15 +304,26 @@ def _run_cycle_body(send_email):
     print(f"  Sell signals: {len([s for s in signals if s['action'] == 'sell'])}")
 
     # =========================================================================
-    # 7. EXECUTE PAPER TRADES (model-driven)
+    # 7. EXECUTE TRADES VIA ALPACA (model-driven)
     # =========================================================================
-    print("\nExecuting trades (model-driven)...")
+    print("\nExecuting trades via Alpaca...")
     current_prices = {s: p["current_close"] for s, p in predictions.items()}
     trade_actions = []
 
-    portfolio = _Portfolio(DB_PATH, initial_cash=100_000.0)
+    broker = _AlpacaBroker(
+        os.environ.get("KRONOS_ALPACA_KEY_ID", ""),
+        os.environ.get("KRONOS_ALPACA_SECRET_KEY", ""),
+        DB_PATH,
+    )
+
+    # Reset Alpaca account on first run
+    if not prev_context:
+        print("First run — resetting Alpaca account...")
+        broker.reset_account()
+        print("Alpaca account reset complete")
+
     try:
-        trade_actions = portfolio.manage_positions(
+        trade_actions = broker.manage_positions(
             predictions, current_prices,
             max_positions=50,
             min_confidence=0.005,
@@ -322,7 +335,7 @@ def _run_cycle_body(send_email):
     # =========================================================================
     # 8. TAKE SNAPSHOT & SEND EMAIL
     # =========================================================================
-    summary = portfolio.get_summary(current_prices, num_scanned=len(valid_data))
+    summary = broker.get_summary(current_prices, num_scanned=len(valid_data))
     report = _format_report(summary, signals, trade_actions)
 
     print(f"\n{'='*60}")
@@ -355,15 +368,16 @@ def _run_cycle_body(send_email):
 
 
 # =============================================================================
-# MODEL-DRIVEN PORTFOLIO
+# ALPACA BROKER
 # =============================================================================
-class _Portfolio:
-    """Fully model-driven portfolio. No hard-coded stop-loss/take-profit."""
+class _AlpacaBroker:
+    """Alpaca paper trading broker. Source of truth for positions and cash."""
 
-    def __init__(self, db_path, initial_cash=100_000.0):
+    def __init__(self, api_key, secret_key, db_path):
+        from alpaca.trading.client import TradingClient
+        self.client = TradingClient(api_key, secret_key, paper=True)
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.initial_cash = initial_cash
         self._init_db()
 
     def _init_db(self):
@@ -386,107 +400,110 @@ class _Portfolio:
                 );
                 CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT);
             """)
-            # Migration: add last_prediction column if missing
-            cols = [r[1] for r in conn.execute("PRAGMA table_info(positions)").fetchall()]
-            if "last_prediction" not in cols:
-                conn.execute("ALTER TABLE positions ADD COLUMN last_prediction REAL DEFAULT 0")
-            existing = conn.execute("SELECT value FROM state WHERE key='cash'").fetchone()
-            if not existing:
-                conn.execute("INSERT INTO state (key, value) VALUES ('cash', ?)", (str(self.initial_cash),))
 
-    def get_cash(self):
-        with sqlite3.connect(self.db_path) as conn:
-            row = conn.execute("SELECT value FROM state WHERE key='cash'").fetchone()
-            return float(row[0]) if row else self.initial_cash
+    def reset_account(self):
+        """Close all positions and cancel all orders. Fresh start."""
+        try:
+            self.client.close_all_positions(cancel_orders=True)
+            print("  Closed all Alpaca positions and cancelled orders")
+        except Exception as e:
+            print(f"  Reset note: {e}")
+
+    def get_account(self):
+        """Get Alpaca account info."""
+        account = self.client.get_account()
+        return {
+            "buying_power": float(account.buying_power),
+            "equity": float(account.equity),
+            "long_market_value": float(account.long_market_value),
+            "short_market_value": float(account.short_market_value),
+            "cash": float(account.cash),
+            "portfolio_value": float(account.portfolio_value),
+        }
 
     def get_positions(self):
+        """Get all open positions from Alpaca."""
+        positions = self.client.get_all_positions()
+        result = {}
+        for p in positions:
+            result[p.symbol] = {
+                "qty": float(p.qty),
+                "side": p.side.value,
+                "avg_entry_price": float(p.avg_entry_price),
+                "current_price": float(p.current_price),
+                "unrealized_pl": float(p.unrealized_pl),
+                "unrealized_plpc": float(p.unrealized_plpc),
+                "market_value": float(p.market_value),
+            }
+        return result
+
+    def submit_order(self, symbol, qty, side, reason="model"):
+        """Place market order via Alpaca. Returns True if order submitted."""
+        from alpaca.trading.requests import MarketOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+
+        order_data = MarketOrderRequest(
+            symbol=symbol,
+            qty=qty,
+            side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
+            time_in_force=TimeInForce.DAY,
+        )
+        try:
+            order = self.client.submit_order(order_data)
+            self._log_trade(symbol, side, qty, 0, reason)
+            print(f"  ORDER {side.upper()} {qty} x {symbol}  ({reason})")
+            return True
+        except Exception as e:
+            print(f"  ORDER FAILED {symbol} {side} {qty}: {e}")
+            return False
+
+    def close_position(self, symbol, reason="model"):
+        """Close entire position (long or short) via Alpaca."""
+        try:
+            self.client.close_position(symbol)
+            self._log_trade(symbol, "sell", 0, 0, reason)
+            print(f"  CLOSE {symbol}  ({reason})")
+            return True
+        except Exception as e:
+            print(f"  CLOSE FAILED {symbol}: {e}")
+            return False
+
+    def _log_trade(self, symbol, action, shares, price, reason):
+        """Log trade to SQLite for history."""
         with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            return {r["symbol"]: dict(r) for r in conn.execute("SELECT * FROM positions WHERE shares > 0").fetchall()}
-
-    def get_total_equity(self, prices):
-        return sum(pos["shares"] * prices.get(sym, pos["avg_cost"]) for sym, pos in self.get_positions().items())
-
-    def get_total_value(self, prices):
-        return self.get_cash() + self.get_total_equity(prices)
-
-    def buy(self, symbol, price, shares, reason="signal", predicted_return=0.0):
-        cost = price * shares
-        cash = self.get_cash()
-        if cost > cash:
-            shares = int(cash / price)
-            if shares <= 0:
-                return False
-            cost = price * shares
-        with sqlite3.connect(self.db_path) as conn:
-            existing = conn.execute("SELECT shares, avg_cost FROM positions WHERE symbol=?", (symbol,)).fetchone()
-            if existing:
-                old_sh, old_avg = existing
-                new_sh = old_sh + shares
-                new_avg = (old_sh * old_avg + cost) / new_sh
-                conn.execute("UPDATE positions SET shares=?, avg_cost=? WHERE symbol=?", (new_sh, new_avg, symbol))
-            else:
-                conn.execute(
-                    "INSERT INTO positions (symbol, shares, avg_cost, entry_date, last_prediction) VALUES (?,?,?,?,?)",
-                    (symbol, shares, price, datetime.now().isoformat(), predicted_return),
-                )
             conn.execute(
                 "INSERT INTO trades (symbol, action, shares, price, total, timestamp, reason) VALUES (?,?,?,?,?,?,?)",
-                (symbol, "buy", shares, price, cost, datetime.now().isoformat(), reason),
+                (symbol, action, shares, price, price * shares if shares and price else 0, datetime.now().isoformat(), reason),
             )
-            conn.execute("UPDATE state SET value=? WHERE key='cash'", (str(cash - cost),))
-        print(f"  BUY  {shares:>6} x {symbol:<8} @ ${price:>8.2f}  (${cost:>10.2f})  pred={predicted_return:+.2%}")
-        return True
-
-    def sell(self, symbol, price, reason="signal"):
-        with sqlite3.connect(self.db_path) as conn:
-            pos = conn.execute("SELECT shares, avg_cost FROM positions WHERE symbol=? AND shares>0", (symbol,)).fetchone()
-            if not pos:
-                return False
-            sh, avg = pos
-            pnl = (price - avg) * sh
-            pnl_pct = (price - avg) / avg * 100 if avg else 0
-            conn.execute("UPDATE positions SET shares=0 WHERE symbol=?", (symbol,))
-            conn.execute(
-                "INSERT INTO trades (symbol, action, shares, price, total, timestamp, reason) VALUES (?,?,?,?,?,?,?)",
-                (symbol, "sell", sh, price, price * sh, datetime.now().isoformat(), reason),
-            )
-            cash = self.get_cash()
-            conn.execute("UPDATE state SET value=? WHERE key='cash'", (str(cash + price * sh),))
-        print(f"  SELL {sh:>6} x {symbol:<8} @ ${price:>8.2f}  (P&L: ${pnl:>+10.2f} {pnl_pct:>+6.1f}%)  {reason}")
-        return True
 
     def manage_positions(self, predictions, current_prices, max_positions=50, min_confidence=0.005):
         """Model-driven: sell where model predicts negative, buy top predictions."""
         actions = []
         positions = self.get_positions()
+        account = self.get_account()
+        buy_power = account["buying_power"]
 
         # SELL: model predicts negative return or no prediction available
         for sym, pos in list(positions.items()):
-            price = current_prices.get(sym)
-            if price is None:
-                continue
             pred = predictions.get(sym)
             if pred is None:
-                self.sell(sym, price, "no_prediction")
-                actions.append(f"SELL {sym} (no prediction)")
+                if self.close_position(sym, "no_prediction"):
+                    actions.append(f"SELL {sym} (no prediction)")
                 continue
             ret = pred.get("predicted_return", 0)
             conf = pred.get("confidence", 0)
             if ret < 0 or conf < min_confidence:
-                self.sell(sym, price, f"model_sell ret={ret:+.2%} conf={conf:.3f}")
-                actions.append(f"SELL {sym} (ret={ret:+.2%})")
+                if self.close_position(sym, f"model_sell ret={ret:+.2%} conf={conf:.3f}"):
+                    actions.append(f"SELL {sym} (ret={ret:+.2%})")
 
-        # BUY: rank by return * confidence, position size scaled by confidence
+        # BUY: rank by return * confidence
         positions = self.get_positions()
-        total_value = self.get_total_value(current_prices)
-        cash = self.get_cash()
-        current_count = len([p for p in positions.values() if p["shares"] > 0])
+        current_count = len(positions)
         slots = max_positions - current_count
 
         candidates = []
         for sym, pred in predictions.items():
-            if sym in positions and positions[sym].get("shares", 0) > 0:
+            if sym in positions:
                 continue
             ret = pred.get("predicted_return", 0)
             conf = pred.get("confidence", 0)
@@ -497,7 +514,7 @@ class _Portfolio:
         candidates.sort(key=lambda x: x[2], reverse=True)
 
         for sym, pred, score in candidates[:slots]:
-            if cash < 100:
+            if buy_power < 100:
                 break
             price = current_prices.get(sym, pred.get("current_close", 0))
             if price <= 1.0:
@@ -505,33 +522,29 @@ class _Portfolio:
             conf = pred.get("confidence", 0)
             ret = pred.get("predicted_return", 0)
 
-            # Model-driven allocation: score determines position size
-            # Higher return * confidence = larger position (up to 20% of portfolio)
+            # Model-driven allocation: score determines position size (up to 20% of buying power)
             position_pct = min(score / (score + 1.0), 0.20)
-            position_value = total_value * position_pct
-            position_value = min(position_value, cash * 0.95)
+            position_value = buy_power * position_pct
+            position_value = min(position_value, buy_power * 0.95)
             shares = int(position_value / price)
+
             if shares > 0:
-                if self.buy(sym, price, shares, "model_buy", predicted_return=ret):
+                if self.submit_order(sym, shares, "buy", f"model_buy ret={ret:+.2%} conf={conf:.3f}"):
                     actions.append(f"BUY {sym} x{shares} (ret={ret:+.2%}, conf={conf:.3f})")
-                    cash = self.get_cash()
+                    buy_power = self.get_account()["buying_power"]
 
         return actions
 
     def get_summary(self, prices, num_scanned=0):
-        cash = self.get_cash()
-        equity = self.get_total_equity(prices)
-        total = cash + equity
+        """Build summary dict from Alpaca account + SQLite trade log."""
+        account = self.get_account()
         positions = self.get_positions()
         today = datetime.now().strftime("%Y-%m-%d")
 
         with sqlite3.connect(self.db_path) as conn:
             prev = conn.execute("SELECT total_value FROM portfolio_snapshots ORDER BY date DESC LIMIT 1").fetchone()
-            prev_total = float(prev[0]) if prev else self.initial_cash
-            daily_pnl = total - prev_total
-            cum_pnl = total - self.initial_cash
+            prev_total = float(prev[0]) if prev else 100_000.0
 
-            # Today's trades
             today_trades = conn.execute(
                 "SELECT symbol,action,shares,price,total,timestamp,reason FROM trades WHERE timestamp LIKE ? ORDER BY timestamp",
                 (f"{today}%",)
@@ -539,25 +552,45 @@ class _Portfolio:
             today_buys = [t for t in today_trades if t[1] == "buy"]
             today_sells = [t for t in today_trades if t[1] == "sell"]
 
-            # Realized P&L from today's sells
-            realized_pnl = sum(t[4] - (t[3] * t[2]) for t in today_sells if t[6] != "no_prediction")
-            # Approximate: sell total - (sell price * shares) is wrong, need avg_cost
-            # Actually let's compute from positions that were closed today
-            realized_pnl = 0
-            for t in today_sells:
-                # Find the avg_cost from when it was bought
-                buy_row = conn.execute(
-                    "SELECT avg_cost FROM positions WHERE symbol=?", (t[0],)
-                ).fetchone()
-                if buy_row:
-                    avg = buy_row[0]
-                    realized_pnl += (t[3] - avg) * t[2]
+            total_trades = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+            recent = conn.execute(
+                "SELECT symbol,action,shares,price,total,timestamp,reason FROM trades ORDER BY timestamp DESC LIMIT 10"
+            ).fetchall()
 
-            # All-time realized P&L
+            cash = account["cash"]
+            portfolio_value = account["portfolio_value"]
+            daily_pnl = portfolio_value - prev_total
+            cum_pnl = portfolio_value - 100_000.0
+
+            conn.execute(
+                "INSERT OR REPLACE INTO portfolio_snapshots (date,cash,equity,total_value,positions_json,daily_pnl,cumulative_pnl) VALUES (?,?,?,?,?,?,?)",
+                (today, cash, portfolio_value, portfolio_value, json.dumps(positions), daily_pnl, cum_pnl),
+            )
+
+        # Position details from Alpaca
+        pos_details = []
+        for sym, pos in positions.items():
+            side = pos.get("side", "long")
+            qty = abs(pos.get("qty", 0))
+            avg_cost = pos.get("avg_entry_price", 0)
+            current_price = pos.get("current_price", avg_cost)
+            pnl = pos.get("unrealized_pl", 0)
+            pnl_pct = pos.get("unrealized_plpc", 0) * 100
+
+            pos_details.append({
+                "symbol": sym, "shares": qty, "side": side,
+                "avg_cost": avg_cost, "entry_date": today,
+                "current_price": current_price, "pnl": pnl,
+                "pnl_pct": pnl_pct,
+            })
+        pos_details.sort(key=lambda x: x["pnl"], reverse=True)
+
+        # Total realized from trade log (approximate)
+        total_realized = 0
+        with sqlite3.connect(self.db_path) as conn:
             all_sells = conn.execute(
                 "SELECT symbol,shares,price,timestamp,reason FROM trades WHERE action='sell'"
             ).fetchall()
-            total_realized = 0
             for s in all_sells:
                 buy_row = conn.execute(
                     "SELECT avg_cost FROM positions WHERE symbol=?", (s[0],)
@@ -565,45 +598,20 @@ class _Portfolio:
                 if buy_row:
                     total_realized += (s[2] - buy_row[0]) * s[1]
 
-            # Total trades count
-            total_trades = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
-
-            # Recent trades for the report
-            recent = conn.execute(
-                "SELECT symbol,action,shares,price,total,timestamp,reason FROM trades ORDER BY timestamp DESC LIMIT 10"
-            ).fetchall()
-
-            conn.execute(
-                "INSERT OR REPLACE INTO portfolio_snapshots (date,cash,equity,total_value,positions_json,daily_pnl,cumulative_pnl) VALUES (?,?,?,?,?,?,?)",
-                (today, cash, equity, total, json.dumps({s: dict(p) for s, p in positions.items()}), daily_pnl, cum_pnl),
-            )
-
-        # Position details
-        pos_details = []
-        for sym, pos in positions.items():
-            if pos["shares"] <= 0:
-                continue
-            p = prices.get(sym, pos["avg_cost"])
-            pnl = (p - pos["avg_cost"]) * pos["shares"]
-            pos_details.append({
-                "symbol": sym, "shares": pos["shares"], "avg_cost": pos["avg_cost"],
-                "entry_date": pos.get("entry_date", ""),
-                "current_price": p, "pnl": pnl,
-                "pnl_pct": (p - pos["avg_cost"]) / pos["avg_cost"] * 100 if pos["avg_cost"] else 0,
-            })
-        pos_details.sort(key=lambda x: x["pnl"], reverse=True)
-
         return {
-            "date": today, "cash": cash, "equity": equity, "total_value": total,
+            "date": today, "cash": cash, "equity": portfolio_value, "total_value": portfolio_value,
+            "buying_power": account["buying_power"],
+            "long_market_value": account["long_market_value"],
+            "short_market_value": account["short_market_value"],
             "daily_pnl": daily_pnl, "cumulative_pnl": cum_pnl,
-            "num_positions": len([p for p in positions.values() if p["shares"] > 0]),
+            "num_positions": len(positions),
             "total_trades": total_trades, "recent_trades": recent,
             "num_scanned": num_scanned,
             "today_buys": today_buys, "today_sells": today_sells,
-            "realized_pnl_today": realized_pnl,
+            "realized_pnl_today": 0,
             "total_realized": total_realized,
             "pos_details": pos_details,
-            "initial_cash": self.initial_cash,
+            "initial_cash": 100_000.0,
         }
 
 
@@ -805,7 +813,7 @@ def _format_report(summary, signals, actions):
 
     # Header
     lines.append(f"Date: {summary['date']}")
-    lines.append(f"Performance Period Since Last Reset: {summary['date']}")
+    lines.append("Broker: Alpaca Paper Trading (2x leverage)")
     lines.append("")
 
     # AI Runtime
@@ -823,29 +831,31 @@ def _format_report(summary, signals, actions):
     lines.append(f"Open Positions: {summary['num_positions']}")
     lines.append(f"Positions Closed Today: {len(summary.get('today_sells', []))}")
     lines.append(f"New Positions Opened Today: {len(summary.get('today_buys', []))}")
-    lines.append(f"Current Capital Estimate: ${summary['total_value']:,.2f}")
-    invested = summary['total_value'] - summary['cash']
-    lines.append(f"Invested Notional: ${invested:,.2f}")
-    lines.append(f"Available Cash: ${summary['cash']:,.2f}")
+    lines.append(f"Portfolio Value: ${summary['equity']:,.2f}")
+    lines.append(f"Buying Power (2x): ${summary['buying_power']:,.2f}")
+    lines.append(f"Long Exposure: ${summary['long_market_value']:,.2f}")
+    lines.append(f"Short Exposure: ${summary['short_market_value']:,.2f}")
+    lines.append(f"Cash: ${summary['cash']:,.2f}")
     lines.append("")
 
     # Daily Performance
     lines.append("DAILY PERFORMANCE")
     lines.append("-" * 60)
-    daily_pct = (summary['daily_pnl'] / summary['initial_cash']) * 100
+    initial = summary['initial_cash']
+    daily_pct = (summary['daily_pnl'] / initial) * 100
     lines.append(f"Realized P&L (Today): {daily_pct:+.2f}% (${summary['daily_pnl']:,.2f})")
     lines.append("")
 
     # Account Totals
     lines.append("ACCOUNT TOTALS")
     lines.append("-" * 60)
-    total_realized_pct = (summary.get('total_realized', 0) / summary['initial_cash']) * 100
+    total_realized_pct = (summary.get('total_realized', 0) / initial) * 100
     lines.append(f"Total Realized P&L (Lifetime): {total_realized_pct:+.2f}% (${summary.get('total_realized', 0):,.2f})")
     unrealized = sum(p["pnl"] for p in summary.get('pos_details', []))
-    unrealized_pct = (unrealized / summary['initial_cash']) * 100
+    unrealized_pct = (unrealized / initial) * 100
     lines.append(f"Unrealized P&L (Open Positions): {unrealized_pct:+.2f}% (${unrealized:,.2f})")
     lines.append("-" * 60)
-    total_return = (summary.get('total_realized', 0) + unrealized) / summary['initial_cash'] * 100
+    total_return = (summary.get('total_realized', 0) + unrealized) / initial * 100
     lines.append(f"TOTAL ACCOUNT RETURN: {total_return:+.2f}% (Lifetime Realized + Unrealized)")
     lines.append("")
 
@@ -854,11 +864,11 @@ def _format_report(summary, signals, actions):
     if today_buys:
         lines.append("POSITIONS ENTERED TODAY")
         lines.append("-" * 60)
-        lines.append(f"{'Symbol':<8} | {'Side':<6} | {'Entry':>8} | {'Alloc %':>8} | {'Alloc $':>12} | {'Conf':>6} | Reason")
+        lines.append(f"{'Symbol':<8} | {'Side':<6} | {'Entry':>8} | {'Alloc %':>8} | {'Alloc $':>12} | Reason")
         lines.append("-" * 60)
         for t in today_buys:
             sym, action, shares, price, total, ts, reason = t
-            alloc_pct = (total / summary['initial_cash']) * 100 if summary['initial_cash'] else 0
+            alloc_pct = (total / initial) * 100 if initial else 0
             lines.append(f"{sym:<8} | {'LONG':<6} | ${price:>7.2f} | {alloc_pct:>7.1f}% | ${total:>11,.2f} | {reason}")
         lines.append("")
 
@@ -867,11 +877,11 @@ def _format_report(summary, signals, actions):
     if today_sells:
         lines.append("POSITIONS CLOSED TODAY")
         lines.append("-" * 60)
-        lines.append(f"{'Symbol':<8} | {'Side':<6} | {'Entry':>8} | {'Exit':>8} | {'P&L %':>8} | Reason")
+        lines.append(f"{'Symbol':<8} | {'Side':<6} | {'Exit':>8} | Reason")
         lines.append("-" * 60)
         for t in today_sells:
             sym, action, shares, price, total, ts, reason = t
-            lines.append(f"{sym:<8} | {'LONG':<6} | {'--':>8} | ${price:>7.2f} | {'--':>7} | {reason}")
+            lines.append(f"{sym:<8} | {'LONG':<6} | ${price:>7.2f} | {reason}")
         lines.append("")
 
     # Open Positions (Unrealized)
@@ -879,12 +889,12 @@ def _format_report(summary, signals, actions):
     if pos_details:
         lines.append("OPEN POSITIONS (Unrealized)")
         lines.append("-" * 60)
-        lines.append(f"{'Symbol':<8} | {'Side':<6} | {'Entry Date':<12} | {'Entry':>8} | {'Current':>8} | {'P&L %':>8}")
+        lines.append(f"{'Symbol':<8} | {'Side':<6} | {'Entry':>8} | {'Current':>8} | {'P&L %':>8} | {'P&L $':>10}")
         lines.append("-" * 60)
         for p in pos_details:
-            entry_date = p.get('entry_date', '')[:10]
+            side_label = "SHORT" if p.get("side") == "short" else "LONG"
             lines.append(
-                f"{p['symbol']:<8} | {'LONG':<6} | {entry_date:<12} | ${p['avg_cost']:>7.2f} | ${p['current_price']:>7.2f} | {p['pnl_pct']:>+7.2f}%"
+                f"{p['symbol']:<8} | {side_label:<6} | ${p['avg_cost']:>7.2f} | ${p['current_price']:>7.2f} | {p['pnl_pct']:>+7.2f}% | ${p['pnl']:>+9.2f}"
             )
         lines.append("")
 
@@ -985,6 +995,7 @@ def _write_context(trade_actions, predictions, signals, summary, prev_context):
     secrets=[
         modal.Secret.from_name("kronos-twelve-data"),
         modal.Secret.from_name("kronos-email"),
+        modal.Secret.from_name("kronos-alpaca"),
     ],
     schedule=modal.Cron("30 13 * * 1-5"),
     timeout=3600,
@@ -1001,6 +1012,7 @@ def pre_market_run():
     secrets=[
         modal.Secret.from_name("kronos-twelve-data"),
         modal.Secret.from_name("kronos-email"),
+        modal.Secret.from_name("kronos-alpaca"),
     ],
     schedule=modal.Cron("45 19 * * 1-5"),
     timeout=3600,
