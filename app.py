@@ -409,6 +409,11 @@ class _AlpacaBroker:
         except Exception as e:
             print(f"  Reset note: {e}")
 
+    def is_market_open(self):
+        """Check if US stock market is currently open."""
+        clock = self.client.get_clock()
+        return clock.is_open
+
     def get_account(self):
         """Get Alpaca account info."""
         account = self.client.get_account()
@@ -479,6 +484,12 @@ class _AlpacaBroker:
     def manage_positions(self, predictions, current_prices, max_positions=50, min_confidence=0.005):
         """Model-driven: sell where model predicts negative, buy top predictions."""
         actions = []
+
+        # Check if market is open — skip order placement if closed
+        if not self.is_market_open():
+            print("  Market is CLOSED — skipping order placement (will run on next market day)")
+            return actions
+
         positions = self.get_positions()
         account = self.get_account()
         buy_power = account["buying_power"]
