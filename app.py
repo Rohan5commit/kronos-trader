@@ -316,11 +316,23 @@ def _run_cycle_body(send_email):
         DB_PATH,
     )
 
-    # Reset Alpaca account on first run
-    if not prev_context:
-        print("First run — resetting Alpaca account...")
+    # Fresh start: reset Alpaca + clear local DB on first run or new account
+    alpaca_positions = broker.get_positions()
+    has_old_trades = False
+    with sqlite3.connect(DB_PATH) as conn:
+        trade_count = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+        has_old_trades = trade_count > 0
+
+    if not prev_context or (not alpaca_positions and has_old_trades):
+        print("Fresh start — resetting Alpaca account and clearing local state...")
         broker.reset_account()
-        print("Alpaca account reset complete")
+        # Wipe old SQLite state for clean start
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("DELETE FROM trades")
+            conn.execute("DELETE FROM portfolio_snapshots")
+            conn.execute("DELETE FROM positions")
+            conn.execute("DELETE FROM state")
+        print("Fresh start — Alpaca reset + local DB cleared")
 
     try:
         trade_actions = broker.manage_positions(
