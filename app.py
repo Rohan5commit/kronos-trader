@@ -321,7 +321,7 @@ def _run_cycle_body(send_email):
         DB_PATH,
     )
 
-    # Preflight: verify Alpaca credentials are valid before expensive ML work
+    # Preflight: verify Alpaca credentials are valid before placing trades
     try:
         broker.is_market_open()
     except Exception as e:
@@ -359,6 +359,7 @@ def _run_cycle_body(send_email):
     # 8. TAKE SNAPSHOT & SEND EMAIL
     # =========================================================================
     summary = broker.get_summary(current_prices, num_scanned=len(valid_data))
+    summary["model_params"] = f"{sum(p.numel() for p in model.parameters()) / 1e6:.0f}M"
     report = _format_report(summary, signals, trade_actions)
 
     print(f"\n{'='*60}")
@@ -724,17 +725,17 @@ def _fetch_ohlcv_batch(api_keys, symbols, requests_mod, pd_mod, outputsize=600):
     lock = threading.Lock()
 
     def get_key():
-        with lock:
-            key = api_keys[key_idx[0] % len(api_keys)]
-            key_idx[0] += 1
-            now = time.time()
-            call_times[key] = [t for t in call_times[key] if now - t < 60]
-            if len(call_times[key]) >= 8:
+        while True:
+            with lock:
+                key = api_keys[key_idx[0] % len(api_keys)]
+                key_idx[0] += 1
+                now = time.time()
+                call_times[key] = [t for t in call_times[key] if now - t < 60]
+                if len(call_times[key]) < 8:
+                    call_times[key].append(time.time())
+                    return key
                 sleep_time = 60 - (now - call_times[key][0]) + 0.1
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
-            call_times[key].append(time.time())
-            return key
+            time.sleep(max(sleep_time, 0.5))
 
     def fetch_one(sym):
         key = get_key()
@@ -895,7 +896,7 @@ def _format_report(summary, signals, actions):
     lines.append("AI RUNTIME")
     lines.append("-" * 60)
     lines.append("Backend Used: modal (T4 GPU)")
-    lines.append(f"Model Used: Kronos-base ({sum(p.numel() for p in model.parameters()) / 1e6:.0f}M params)")
+    lines.append(f"Model Used: Kronos-base ({summary.get('model_params', '~124')} params)")
     lines.append("Status: OK")
     lines.append("")
 
