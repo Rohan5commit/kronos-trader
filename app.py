@@ -33,6 +33,7 @@ image = (
         "requests",
         "pyarrow",
         "alpaca-py",
+        "pytz",
     )
     .apt_install("git")
     .run_commands(
@@ -109,9 +110,6 @@ def _run_cycle_body(send_email):
 
     # =========================================================================
     # 1. LOAD API KEYS
-
-    # =========================================================================
-    # 1. LOAD API KEYS
     # =========================================================================
     keys_raw = os.environ.get("TWELVE_DATA_KEYS", "[]")
     API_KEYS = json.loads(keys_raw) if keys_raw else []
@@ -182,7 +180,8 @@ def _run_cycle_body(send_email):
     # 4. LOAD KRONOS MODEL
     # =========================================================================
     print("\nLoading Kronos model...")
-    sys.path.insert(0, "/root/kronos_repo")
+    if "/root/kronos_repo" not in sys.path:
+        sys.path.insert(0, "/root/kronos_repo")
     from model import Kronos, KronosTokenizer, KronosPredictor
 
     model_cache = Path(MODEL_CACHE)
@@ -246,6 +245,11 @@ def _run_cycle_body(send_email):
                 if x_hist.isnull().values.any():
                     continue
 
+                # Skip penny stocks BEFORE expensive GPU inference
+                current_close = float(df.iloc[-1]["close"])
+                if current_close < 1.0:
+                    continue
+
                 pred_df = predictor.predict(
                     df=x_hist,
                     x_timestamp=x_timestamp,
@@ -259,17 +263,17 @@ def _run_cycle_body(send_email):
                 current_close = float(df.iloc[-1]["close"])
                 predicted_close = float(pred_df["close"].iloc[-1])
 
-                # Skip penny stocks — unreliable predictions
-                if current_close < 1.0:
-                    continue
-
                 predicted_return = (predicted_close - current_close) / current_close
 
                 # Cap predictions at ±20%
                 predicted_return = max(-0.20, min(0.20, predicted_return))
 
                 pred_std = float(pred_df["close"].std())
-                confidence = abs(predicted_return) / (pred_std / current_close + 1e-8)
+                # Confidence: ratio of predicted return magnitude to trajectory volatility
+                # Higher = more certain the prediction is meaningful vs noise
+                pred_range = float(pred_df["close"].max() - pred_df["close"].min())
+                trajectory_stability = pred_range / (pred_std + 1e-8)
+                confidence = abs(predicted_return) * min(trajectory_stability, 10.0)
 
                 # Skip if prediction is too noisy
                 pred_std_pct = pred_std / current_close
@@ -290,8 +294,9 @@ def _run_cycle_body(send_email):
                     print(f"  ✗ {sym}: {type(e).__name__}: {e}")
                 continue
 
-        if (i + batch_size) % 100 == 0:
-            print(f"  Predicted {min(i+batch_size, len(symbols_list))}/{len(symbols_list)}")
+        predicted_count = len(predictions)
+        if predicted_count > 0 and predicted_count % 100 < batch_size:
+            print(f"  Predicted {predicted_count}/{len(symbols_list)} stocks")
 
     print(f"\nCompleted predictions for {len(predictions)} stocks")
 
@@ -316,10 +321,16 @@ def _run_cycle_body(send_email):
         DB_PATH,
     )
 
+    # Preflight: verify Alpaca credentials are valid before expensive ML work
+    try:
+        broker.is_market_open()
+    except Exception as e:
+        raise RuntimeError(f"Alpaca credential validation failed: {e}") from e
+
     # Fresh start: reset Alpaca + clear local DB on first run or new account
     alpaca_positions = broker.get_positions()
     has_old_trades = False
-    with sqlite3.connect(DB_PATH) as conn:
+    with sqlite3.connect(DB_PATH, timeout=30) as conn:
         trade_count = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
         has_old_trades = trade_count > 0
 
@@ -327,7 +338,7 @@ def _run_cycle_body(send_email):
         print("Fresh start — resetting Alpaca account and clearing local state...")
         broker.reset_account()
         # Wipe old SQLite state for clean start
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(DB_PATH, timeout=30) as conn:
             conn.execute("DELETE FROM trades")
             conn.execute("DELETE FROM portfolio_snapshots")
             conn.execute("DELETE FROM positions")
@@ -366,6 +377,8 @@ def _run_cycle_body(send_email):
             sender_password=password,
             recipient_email=recipient,
         )
+    elif not send_email:
+        print("Email sending disabled for this run (pre-market)")
     else:
         print("Email not configured — skipping notification")
 
@@ -387,13 +400,20 @@ class _AlpacaBroker:
 
     def __init__(self, api_key, secret_key, db_path):
         from alpaca.trading.client import TradingClient
+        if not api_key or not secret_key:
+            raise ValueError(
+                f"Alpaca credentials missing — "
+                f"KRONOS_ALPACA_KEY_ID={'SET' if api_key else 'MISSING'}, "
+                f"KRONOS_ALPACA_SECRET_KEY={'SET' if secret_key else 'MISSING'}. "
+                f"Recreate: modal secret create kronos-alpaca KRONOS_ALPACA_KEY_ID=<key> KRONOS_ALPACA_SECRET_KEY=<secret>"
+            )
         self.client = TradingClient(api_key, secret_key, paper=True)
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     def _init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=30) as conn:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS positions (
                     symbol TEXT PRIMARY KEY, shares REAL DEFAULT 0,
@@ -467,8 +487,10 @@ class _AlpacaBroker:
         )
         try:
             order = self.client.submit_order(order_data)
-            self._log_trade(symbol, side, qty, 0, reason)
-            print(f"  ORDER {side.upper()} {qty} x {symbol}  ({reason})")
+            fill_price = float(order.filled_avg_price) if order.filled_avg_price else 0
+            fill_qty = float(order.filled_qty) if order.filled_qty else qty
+            self._log_trade(symbol, side, fill_qty, fill_price, reason)
+            print(f"  ORDER {side.upper()} {fill_qty} x {symbol} @ ${fill_price:.2f}  ({reason})")
             return True
         except Exception as e:
             print(f"  ORDER FAILED {symbol} {side} {qty}: {e}")
@@ -477,9 +499,12 @@ class _AlpacaBroker:
     def close_position(self, symbol, reason="model"):
         """Close entire position (long or short) via Alpaca."""
         try:
+            pos = self.client.get_position(symbol)
+            shares = float(pos.qty)
+            price = float(pos.current_price)
             self.client.close_position(symbol)
-            self._log_trade(symbol, "sell", 0, 0, reason)
-            print(f"  CLOSE {symbol}  ({reason})")
+            self._log_trade(symbol, "sell", shares, price, reason)
+            print(f"  CLOSE {symbol} {shares} x @ ${price:.2f}  ({reason})")
             return True
         except Exception as e:
             print(f"  CLOSE FAILED {symbol}: {e}")
@@ -487,7 +512,7 @@ class _AlpacaBroker:
 
     def _log_trade(self, symbol, action, shares, price, reason):
         """Log trade to SQLite for history."""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=30) as conn:
             conn.execute(
                 "INSERT INTO trades (symbol, action, shares, price, total, timestamp, reason) VALUES (?,?,?,?,?,?,?)",
                 (symbol, action, shares, price, price * shares if shares and price else 0, datetime.now().isoformat(), reason),
@@ -539,7 +564,15 @@ class _AlpacaBroker:
         for sym, pred, score in candidates[:slots]:
             if buy_power < 100:
                 break
-            price = current_prices.get(sym, pred.get("current_close", 0))
+            # Use real-time price from Alpaca instead of stale historical close
+            try:
+                from alpaca.data.requests import StockLatestQuoteRequest
+                from alpaca.data.enums import DataFeed
+                quote_req = StockLatestQuoteRequest(symbol_or_symbols=sym, feed=DataFeed.IEX)
+                quote = self.client.get_stock_latest_quote(quote_req)
+                price = float(quote[sym].ask_price) if quote and sym in quote else current_prices.get(sym, pred.get("current_close", 0))
+            except Exception:
+                price = current_prices.get(sym, pred.get("current_close", 0))
             if price <= 1.0:
                 continue
             conf = pred.get("confidence", 0)
@@ -564,7 +597,7 @@ class _AlpacaBroker:
         positions = self.get_positions()
         today = datetime.now().strftime("%Y-%m-%d")
 
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=30) as conn:
             prev = conn.execute("SELECT total_value FROM portfolio_snapshots ORDER BY date DESC LIMIT 1").fetchone()
             prev_total = float(prev[0]) if prev else 100_000.0
 
@@ -608,18 +641,34 @@ class _AlpacaBroker:
             })
         pos_details.sort(key=lambda x: x["pnl"], reverse=True)
 
-        # Total realized from trade log (approximate)
+        # Total realized from trade log — match buy/sell pairs per symbol
         total_realized = 0
-        with sqlite3.connect(self.db_path) as conn:
-            all_sells = conn.execute(
-                "SELECT symbol,shares,price,timestamp,reason FROM trades WHERE action='sell'"
+        realized_today = 0
+        with sqlite3.connect(self.db_path, timeout=30) as conn:
+            all_trades = conn.execute(
+                "SELECT symbol,action,shares,price,timestamp FROM trades ORDER BY timestamp"
             ).fetchall()
-            for s in all_sells:
-                buy_row = conn.execute(
-                    "SELECT avg_cost FROM positions WHERE symbol=?", (s[0],)
-                ).fetchone()
-                if buy_row:
-                    total_realized += (s[2] - buy_row[0]) * s[1]
+            # Track average cost per symbol from buy trades
+            buy_costs = {}
+            for t in all_trades:
+                sym, action, shares, price, ts = t
+                if action == "buy":
+                    # Running average cost
+                    prev = buy_costs.get(sym, {"shares": 0, "total_cost": 0})
+                    new_shares = prev["shares"] + shares
+                    new_cost = prev["total_cost"] + (price * shares if shares and price else 0)
+                    buy_costs[sym] = {"shares": new_shares, "total_cost": new_cost}
+                elif action == "sell" and sym in buy_costs:
+                    bc = buy_costs[sym]
+                    if bc["shares"] > 0 and shares > 0 and price > 0:
+                        avg_cost = bc["total_cost"] / bc["shares"]
+                        pnl = (price - avg_cost) * shares
+                        total_realized += pnl
+                        if ts.startswith(today):
+                            realized_today += pnl
+                        # Reduce tracked shares
+                        bc["shares"] -= shares
+                        bc["total_cost"] = avg_cost * max(0, bc["shares"])
 
         return {
             "date": today, "cash": cash, "equity": portfolio_value, "total_value": portfolio_value,
@@ -631,7 +680,7 @@ class _AlpacaBroker:
             "total_trades": total_trades, "recent_trades": recent,
             "num_scanned": num_scanned,
             "today_buys": today_buys, "today_sells": today_sells,
-            "realized_pnl_today": 0,
+            "realized_pnl_today": realized_today,
             "total_realized": total_realized,
             "pos_details": pos_details,
             "initial_cash": 100_000.0,
@@ -668,21 +717,24 @@ def _fetch_stock_universe(api_keys, requests_mod):
 
 def _fetch_ohlcv_batch(api_keys, symbols, requests_mod, pd_mod, outputsize=600):
     """Fetch OHLCV data with key rotation."""
+    import threading
     results = {}
     key_idx = [0]
     call_times = {k: [] for k in api_keys}
+    lock = threading.Lock()
 
     def get_key():
-        key = api_keys[key_idx[0] % len(api_keys)]
-        key_idx[0] += 1
-        now = time.time()
-        call_times[key] = [t for t in call_times[key] if now - t < 60]
-        if len(call_times[key]) >= 8:
-            sleep_time = 60 - (now - call_times[key][0]) + 0.1
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-        call_times[key].append(time.time())
-        return key
+        with lock:
+            key = api_keys[key_idx[0] % len(api_keys)]
+            key_idx[0] += 1
+            now = time.time()
+            call_times[key] = [t for t in call_times[key] if now - t < 60]
+            if len(call_times[key]) >= 8:
+                sleep_time = 60 - (now - call_times[key][0]) + 0.1
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+            call_times[key].append(time.time())
+            return key
 
     def fetch_one(sym):
         key = get_key()
@@ -843,7 +895,7 @@ def _format_report(summary, signals, actions):
     lines.append("AI RUNTIME")
     lines.append("-" * 60)
     lines.append("Backend Used: modal (T4 GPU)")
-    lines.append("Model Used: Kronos-base (102M params)")
+    lines.append(f"Model Used: Kronos-base ({sum(p.numel() for p in model.parameters()) / 1e6:.0f}M params)")
     lines.append("Status: OK")
     lines.append("")
 
@@ -1026,6 +1078,12 @@ def _write_context(trade_actions, predictions, signals, summary, prev_context):
 )
 def pre_market_run():
     """Pre-market: predict + trade, 9:30 AM ET weekdays."""
+    import pytz
+    et = pytz.timezone("US/Eastern")
+    now_et = datetime.now(et)
+    if now_et.hour != 9 or now_et.minute != 30:
+        print(f"Skipping pre_market_run: ET time is {now_et.strftime('%H:%M')}, expected 09:30")
+        return
     run_trading_cycle.local()
 
 
@@ -1043,6 +1101,12 @@ def pre_market_run():
 )
 def post_market_run():
     """Post-market: predict + rebalance + email report, 3:45 PM ET weekdays."""
+    import pytz
+    et = pytz.timezone("US/Eastern")
+    now_et = datetime.now(et)
+    if now_et.hour != 15 or now_et.minute != 45:
+        print(f"Skipping post_market_run: ET time is {now_et.strftime('%H:%M')}, expected 15:45")
+        return
     run_trading_cycle.local(send_email=True)
 
 
@@ -1057,6 +1121,12 @@ def post_market_run():
 )
 def update_data_morning():
     """Update latest bars for all cached stocks. Runs daily 8:00 AM ET before pre-market."""
+    import pytz
+    et = pytz.timezone("US/Eastern")
+    now_et = datetime.now(et)
+    if now_et.hour != 8:
+        print(f"Skipping update_data_morning: ET time is {now_et.strftime('%H:%M')}, expected 08:00")
+        return
     _run_data_update()
 
 
@@ -1071,6 +1141,12 @@ def update_data_morning():
 )
 def update_data_afternoon():
     """Update latest bars for all cached stocks. Runs daily 3:00 PM ET before post-market."""
+    import pytz
+    et = pytz.timezone("US/Eastern")
+    now_et = datetime.now(et)
+    if now_et.hour != 15:
+        print(f"Skipping update_data_afternoon: ET time is {now_et.strftime('%H:%M')}, expected 15:00")
+        return
     _run_data_update()
 
 
