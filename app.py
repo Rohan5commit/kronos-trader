@@ -638,6 +638,13 @@ class _AlpacaBroker:
             shares = int(position_value / price)
 
             if shares > 0:
+                try:
+                    asset = self.client.get_asset(sym)
+                    if not asset.tradable:
+                        print(f"  SKIP {sym}: not tradable on Alpaca")
+                        continue
+                except Exception:
+                    pass
                 if self.submit_order(sym, shares, "buy", f"model_buy ret={ret:+.2%} conf={conf:.3f}"):
                     actions.append(f"BUY {sym} x{shares} (ret={ret:+.2%}, conf={conf:.3f})")
                     buy_power = self.get_account()["buying_power"]
@@ -836,7 +843,7 @@ def _load_cached_data(cache_dir, pd_mod):
     return data
 
 
-def _update_latest_bars(api_keys, symbols, cached_data, cache_dir, requests_mod, pd_mod, num_bars=10):
+def _update_latest_bars(api_keys, symbols, cached_data, cache_dir, requests_mod, pd_mod, num_bars=10, volume=None):
     """Fetch only latest bars and update cache — rate-limited to respect API limits."""
     import threading
     import time as _time
@@ -890,6 +897,8 @@ def _update_latest_bars(api_keys, symbols, cached_data, cache_dir, requests_mod,
             updated[0] += 1
             if updated[0] % 200 == 0:
                 print(f"  Updated {updated[0]}/{len(symbols)} stocks...")
+                if volume:
+                    volume.commit()
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
     with ThreadPoolExecutor(max_workers=8) as executor:
@@ -972,7 +981,7 @@ def _format_report(summary, signals, actions):
     lines.append("-" * 60)
     initial = summary['initial_cash']
     daily_pct = (summary['daily_pnl'] / initial) * 100
-    lines.append(f"Realized P&L (Today): {daily_pct:+.2f}% (${summary['daily_pnl']:,.2f})")
+    lines.append(f"Daily Portfolio Change: {daily_pct:+.2f}% (${summary['daily_pnl']:,.2f})")
     lines.append("")
 
     # Account Totals
@@ -1292,6 +1301,6 @@ def _run_data_update():
     symbols_to_update = [s for s in all_symbols if s in cached_data]
     print(f"Updating {len(symbols_to_update)} stocks...")
 
-    _update_latest_bars(API_KEYS, symbols_to_update, cached_data, data_cache_dir, req, pd)
+    _update_latest_bars(API_KEYS, symbols_to_update, cached_data, data_cache_dir, req, pd, volume=vol)
     vol.commit()
     print(f"\nData update complete. Updated {len(symbols_to_update)} stocks.")
