@@ -331,13 +331,16 @@ def _run_cycle_body(send_email):
     alpaca_positions = broker.get_positions()
     has_old_trades = False
     with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        stale_count = conn.execute("SELECT COUNT(*) FROM trades WHERE price = 0 OR price IS NULL").fetchone()[0]
+        if stale_count > 0:
+            print(f"Cleaning {stale_count} stale trades (price=0 from broken logging period)...")
+            conn.execute("DELETE FROM trades WHERE price = 0 OR price IS NULL")
         trade_count = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
         has_old_trades = trade_count > 0
 
-    if not prev_context or (not alpaca_positions and has_old_trades):
-        print("Fresh start — resetting Alpaca account and clearing local state...")
+    if not alpaca_positions and has_old_trades:
+        print("Fresh start — Alpaca has no positions but DB has old trades. Resetting...")
         broker.reset_account()
-        # Wipe old SQLite state for clean start
         with sqlite3.connect(DB_PATH, timeout=30) as conn:
             conn.execute("DELETE FROM trades")
             conn.execute("DELETE FROM portfolio_snapshots")
@@ -349,7 +352,7 @@ def _run_cycle_body(send_email):
         trade_actions = broker.manage_positions(
             predictions, current_prices,
             max_positions=50,
-            min_confidence=0.005,
+            min_confidence=0.05,
         )
     except Exception as e:
         print(f"ERROR in trading: {type(e).__name__}: {e}")
@@ -401,6 +404,7 @@ class _AlpacaBroker:
 
     def __init__(self, api_key, secret_key, db_path):
         from alpaca.trading.client import TradingClient
+        from alpaca.data.historical.stock import StockHistoricalDataClient
         if not api_key or not secret_key:
             raise ValueError(
                 f"Alpaca credentials missing — "
@@ -409,6 +413,7 @@ class _AlpacaBroker:
                 f"Recreate: modal secret create kronos-alpaca KRONOS_ALPACA_KEY_ID=<key> KRONOS_ALPACA_SECRET_KEY=<secret>"
             )
         self.client = TradingClient(api_key, secret_key, paper=True)
+        self.data_client = StockHistoricalDataClient(api_key, secret_key)
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
@@ -527,6 +532,13 @@ class _AlpacaBroker:
             shares = float(pos.qty)
             price = float(pos.current_price)
             self.client.close_position(symbol)
+            import time as _time
+            _time.sleep(0.5)
+            verify_positions = self.client.get_all_positions()
+            still_open = any(p.symbol == symbol for p in verify_positions)
+            if still_open:
+                print(f"  CLOSE PENDING {symbol}: order submitted but position still open on Alpaca")
+                return False
             self._log_trade(symbol, "sell", shares, price, reason)
             print(f"  CLOSE {symbol} {shares} x @ ${price:.2f}  ({reason})")
             return True
@@ -564,7 +576,7 @@ class _AlpacaBroker:
                 continue
             ret = pred.get("predicted_return", 0)
             conf = pred.get("confidence", 0)
-            if ret < 0 or conf < min_confidence:
+            if ret < 0 and conf >= min_confidence:
                 if self.close_position(sym, f"model_sell ret={ret:+.2%} conf={conf:.3f}"):
                     actions.append(f"SELL {sym} (ret={ret:+.2%})")
 
@@ -593,7 +605,7 @@ class _AlpacaBroker:
                 from alpaca.data.requests import StockLatestQuoteRequest
                 from alpaca.data.enums import DataFeed
                 quote_req = StockLatestQuoteRequest(symbol_or_symbols=sym, feed=DataFeed.IEX)
-                quote = self.client.get_stock_latest_quote(quote_req)
+                quote = self.data_client.get_stock_latest_quote(quote_req)
                 price = float(quote[sym].ask_price) if quote and sym in quote else current_prices.get(sym, pred.get("current_close", 0))
             except Exception:
                 price = current_prices.get(sym, pred.get("current_close", 0))
@@ -1080,9 +1092,12 @@ def _write_context(trade_actions, predictions, signals, summary, prev_context):
 
     ctx_path = Path(CONTEXT_PATH)
     ctx_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(ctx_path, "w") as f:
-        json.dump(context, f, indent=2)
-    print(f"Context written for next run")
+    try:
+        with open(ctx_path, "w") as f:
+            json.dump(context, f, indent=2)
+        print(f"Context written for next run")
+    except Exception as e:
+        print(f"WARNING: Failed to write context file: {e}")
 
 
 # =============================================================================
