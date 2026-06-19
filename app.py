@@ -156,6 +156,22 @@ def _run_cycle_body(send_email):
     cached_data = _load_cached_data(data_cache_dir, pd)
     symbols_to_fetch = [s for s in all_symbols if s not in cached_data]
 
+    # Data freshness check — warn if cached data is stale
+    if cached_data:
+        newest_ts = None
+        for df in cached_data.values():
+            if len(df) > 0:
+                last = df["timestamp"].iloc[-1]
+                if newest_ts is None or last > newest_ts:
+                    newest_ts = last
+        if newest_ts is not None:
+            from datetime import timedelta
+            age_days = (datetime.now() - newest_ts.to_pydatetime().replace(tzinfo=None)).days
+            if age_days > 3:
+                print(f"WARNING: Cached data is {age_days} days old (newest: {newest_ts.date()}). Data update cron may have failed.")
+            else:
+                print(f"Data freshness: OK (newest bar: {newest_ts.date()}, {age_days} days old)")
+
     print(f"\nData status: {len(cached_data)} cached, {len(symbols_to_fetch)} new")
 
     if symbols_to_fetch:
@@ -591,7 +607,8 @@ class _AlpacaBroker:
                 continue
             ret = pred.get("predicted_return", 0)
             conf = pred.get("confidence", 0)
-            if ret <= 0 or conf < min_confidence:
+            pred_std_pct = pred.get("pred_std_pct", 0)
+            if ret <= 0 or conf < min_confidence or pred_std_pct > 0.08:
                 continue
             candidates.append((sym, pred, ret * conf))
 
@@ -652,12 +669,43 @@ class _AlpacaBroker:
             cash = account["cash"]
             portfolio_value = account["portfolio_value"]
             daily_pnl = portfolio_value - prev_total
-            cum_pnl = portfolio_value - 100_000.0
+
+            first_snap = conn.execute("SELECT total_value FROM portfolio_snapshots ORDER BY date ASC LIMIT 1").fetchone()
+            initial_cash = float(first_snap[0]) if first_snap else 100_000.0
+            cum_pnl = portfolio_value - initial_cash
 
             conn.execute(
                 "INSERT OR REPLACE INTO portfolio_snapshots (date,cash,equity,total_value,positions_json,daily_pnl,cumulative_pnl) VALUES (?,?,?,?,?,?,?)",
                 (today, cash, portfolio_value, portfolio_value, json.dumps(positions), daily_pnl, cum_pnl),
             )
+
+            # Realized P&L from trade log — match buy/sell pairs per symbol
+            all_trades = conn.execute(
+                "SELECT symbol,action,shares,price,timestamp FROM trades ORDER BY timestamp"
+            ).fetchall()
+            buy_costs = {}
+            total_realized = 0
+            realized_today = 0
+            for t in all_trades:
+                sym, action, shares, price, ts = t
+                if action == "buy":
+                    prev_bc = buy_costs.get(sym, {"shares": 0, "total_cost": 0})
+                    new_shares = prev_bc["shares"] + shares
+                    new_cost = prev_bc["total_cost"] + (price * shares if shares and price else 0)
+                    buy_costs[sym] = {"shares": new_shares, "total_cost": new_cost}
+                elif action == "sell" and sym in buy_costs:
+                    bc = buy_costs[sym]
+                    if bc["shares"] > 0 and shares > 0 and price > 0:
+                        avg_cost = bc["total_cost"] / bc["shares"]
+                        pnl = (price - avg_cost) * shares
+                        total_realized += pnl
+                        if ts.startswith(today):
+                            realized_today += pnl
+                        bc["shares"] -= shares
+                        bc["total_cost"] = avg_cost * max(0, bc["shares"])
+
+            first_snap = conn.execute("SELECT total_value FROM portfolio_snapshots ORDER BY date ASC LIMIT 1").fetchone()
+            initial_cash = float(first_snap[0]) if first_snap else 100_000.0
 
         # Position details from Alpaca
         pos_details = []
@@ -668,7 +716,6 @@ class _AlpacaBroker:
             current_price = pos.get("current_price", avg_cost)
             pnl = pos.get("unrealized_pl", 0)
             pnl_pct = pos.get("unrealized_plpc", 0) * 100
-
             pos_details.append({
                 "symbol": sym, "shares": qty, "side": side,
                 "avg_cost": avg_cost, "entry_date": today,
@@ -676,35 +723,6 @@ class _AlpacaBroker:
                 "pnl_pct": pnl_pct,
             })
         pos_details.sort(key=lambda x: x["pnl"], reverse=True)
-
-        # Total realized from trade log — match buy/sell pairs per symbol
-        total_realized = 0
-        realized_today = 0
-        with sqlite3.connect(self.db_path, timeout=30) as conn:
-            all_trades = conn.execute(
-                "SELECT symbol,action,shares,price,timestamp FROM trades ORDER BY timestamp"
-            ).fetchall()
-            # Track average cost per symbol from buy trades
-            buy_costs = {}
-            for t in all_trades:
-                sym, action, shares, price, ts = t
-                if action == "buy":
-                    # Running average cost
-                    prev = buy_costs.get(sym, {"shares": 0, "total_cost": 0})
-                    new_shares = prev["shares"] + shares
-                    new_cost = prev["total_cost"] + (price * shares if shares and price else 0)
-                    buy_costs[sym] = {"shares": new_shares, "total_cost": new_cost}
-                elif action == "sell" and sym in buy_costs:
-                    bc = buy_costs[sym]
-                    if bc["shares"] > 0 and shares > 0 and price > 0:
-                        avg_cost = bc["total_cost"] / bc["shares"]
-                        pnl = (price - avg_cost) * shares
-                        total_realized += pnl
-                        if ts.startswith(today):
-                            realized_today += pnl
-                        # Reduce tracked shares
-                        bc["shares"] -= shares
-                        bc["total_cost"] = avg_cost * max(0, bc["shares"])
 
         return {
             "date": today, "cash": cash, "equity": portfolio_value, "total_value": portfolio_value,
@@ -719,7 +737,7 @@ class _AlpacaBroker:
             "realized_pnl_today": realized_today,
             "total_realized": total_realized,
             "pos_details": pos_details,
-            "initial_cash": 100_000.0,
+            "initial_cash": initial_cash,
         }
 
 
@@ -1123,7 +1141,25 @@ def pre_market_run():
     if now_et.hour != 9 or now_et.minute != 30:
         print(f"Skipping pre_market_run: ET time is {now_et.strftime('%H:%M')}, expected 09:30")
         return
-    run_trading_cycle.local()
+    try:
+        run_trading_cycle.local()
+    except Exception as e:
+        print(f"FATAL ERROR in pre_market_run: {type(e).__name__}: {e}")
+        try:
+            sender = os.environ.get("KRONOS_EMAIL", "")
+            password = os.environ.get("KRONOS_EMAIL_PASSWORD", "")
+            recipient = os.environ.get("KRONOS_RECIPIENT", sender)
+            if sender and password and recipient:
+                _send_email(
+                    subject=f"Kronos ERROR — pre_market_run — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    body=f"FATAL ERROR in pre-market run:\n\n{type(e).__name__}: {e}\n\nCheck Modal logs for details.",
+                    sender_email=sender,
+                    sender_password=password,
+                    recipient_email=recipient,
+                )
+        except Exception:
+            pass
+        raise
 
 
 @app.function(
@@ -1166,7 +1202,25 @@ def update_data_morning():
     if now_et.hour != 8:
         print(f"Skipping update_data_morning: ET time is {now_et.strftime('%H:%M')}, expected 08:00")
         return
-    _run_data_update()
+    try:
+        _run_data_update()
+    except Exception as e:
+        print(f"FATAL ERROR in update_data_morning: {type(e).__name__}: {e}")
+        try:
+            sender = os.environ.get("KRONOS_EMAIL", "")
+            password = os.environ.get("KRONOS_EMAIL_PASSWORD", "")
+            recipient = os.environ.get("KRONOS_RECIPIENT", sender)
+            if sender and password and recipient:
+                _send_email(
+                    subject=f"Kronos ERROR — data update failed — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    body=f"FATAL ERROR in morning data update:\n\n{type(e).__name__}: {e}\n\nCheck Modal logs for details.",
+                    sender_email=sender,
+                    sender_password=password,
+                    recipient_email=recipient,
+                )
+        except Exception:
+            pass
+        raise
 
 
 @app.function(
@@ -1186,7 +1240,25 @@ def update_data_afternoon():
     if now_et.hour != 15:
         print(f"Skipping update_data_afternoon: ET time is {now_et.strftime('%H:%M')}, expected 15:00")
         return
-    _run_data_update()
+    try:
+        _run_data_update()
+    except Exception as e:
+        print(f"FATAL ERROR in update_data_afternoon: {type(e).__name__}: {e}")
+        try:
+            sender = os.environ.get("KRONOS_EMAIL", "")
+            password = os.environ.get("KRONOS_EMAIL_PASSWORD", "")
+            recipient = os.environ.get("KRONOS_RECIPIENT", sender)
+            if sender and password and recipient:
+                _send_email(
+                    subject=f"Kronos ERROR — data update failed — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    body=f"FATAL ERROR in afternoon data update:\n\n{type(e).__name__}: {e}\n\nCheck Modal logs for details.",
+                    sender_email=sender,
+                    sender_password=password,
+                    recipient_email=recipient,
+                )
+        except Exception:
+            pass
+        raise
 
 
 def _run_data_update():
