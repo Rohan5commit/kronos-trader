@@ -488,8 +488,23 @@ class _AlpacaBroker:
         )
         try:
             order = self.client.submit_order(order_data)
-            fill_price = float(order.filled_avg_price) if order.filled_avg_price else 0
-            fill_qty = float(order.filled_qty) if order.filled_qty else qty
+            import time as _time
+            _time.sleep(0.3)
+            fill_price = 0.0
+            fill_qty = float(qty)
+            try:
+                all_pos = self.client.get_all_positions()
+                for p in all_pos:
+                    if p.symbol == symbol:
+                        fill_price = float(p.avg_entry_price) if side == "buy" else float(p.current_price)
+                        fill_qty = float(p.qty)
+                        break
+            except Exception:
+                pass
+            if fill_price == 0.0:
+                fill_price = float(order.filled_avg_price) if order.filled_avg_price else 0.0
+            if fill_qty == 0.0:
+                fill_qty = float(order.filled_qty) if order.filled_qty else float(qty)
             self._log_trade(symbol, side, fill_qty, fill_price, reason)
             print(f"  ORDER {side.upper()} {fill_qty} x {symbol} @ ${fill_price:.2f}  ({reason})")
             return True
@@ -500,7 +515,15 @@ class _AlpacaBroker:
     def close_position(self, symbol, reason="model"):
         """Close entire position (long or short) via Alpaca."""
         try:
-            pos = self.client.get_position(symbol)
+            all_positions = self.client.get_all_positions()
+            pos = None
+            for p in all_positions:
+                if p.symbol == symbol:
+                    pos = p
+                    break
+            if pos is None:
+                print(f"  CLOSE SKIPPED {symbol}: no open position on Alpaca")
+                return False
             shares = float(pos.qty)
             price = float(pos.current_price)
             self.client.close_position(symbol)
