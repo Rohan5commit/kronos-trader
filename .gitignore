@@ -6,3 +6,4 @@ __pycache__/
 *.parquet
 .kronos_cache/
 outputs/
+__pycache__/
