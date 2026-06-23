@@ -98,6 +98,10 @@ def run_trading_cycle(send_email=False):
             except Exception:
                 pass
         raise
+    finally:
+        sys.stdout = old_stdout
+        log_file.close()
+        vol.commit()
 
 
 def _run_cycle_body(send_email):
@@ -1040,20 +1044,26 @@ def _format_report(summary, signals, actions):
     return "\n".join(lines)
 
 
-def _send_email(subject, body, sender_email, sender_password, recipient_email):
-    try:
-        msg = MIMEMultipart()
-        msg["From"] = sender_email
-        msg["To"] = recipient_email
-        msg["Subject"] = subject
-        msg.attach(MIMEText(body, "plain"))
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()
-            server.login(sender_email, sender_password)
-            server.send_message(msg)
-        print(f"Email sent to {recipient_email}")
-    except Exception as e:
-        print(f"Email error: {e}")
+def _send_email(subject, body, sender_email, sender_password, recipient_email, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            msg = MIMEMultipart()
+            msg["From"] = sender_email
+            msg["To"] = recipient_email
+            msg["Subject"] = subject
+            msg.attach(MIMEText(body, "plain"))
+            with smtplib.SMTP("smtp.gmail.com", 587) as server:
+                server.starttls()
+                server.login(sender_email, sender_password)
+                server.send_message(msg)
+            print(f"Email sent to {recipient_email}")
+            return True
+        except Exception as e:
+            print(f"Email error (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(5 * (attempt + 1))
+    print(f"Email failed after {max_retries} attempts")
+    return False
 
 
 # =============================================================================
@@ -1128,6 +1138,56 @@ def _write_context(trade_actions, predictions, signals, summary, prev_context):
 
 
 # =============================================================================
+# LOG PERSISTENCE — capture all output to volume for post-mortem diagnosis
+# =============================================================================
+class _TeeWriter:
+    """Write to both stdout and a file simultaneously."""
+    def __init__(self, original, log_file):
+        self.original = original
+        self.log_file = log_file
+    def write(self, data):
+        self.original.write(data)
+        try:
+            self.log_file.write(data)
+            self.log_file.flush()
+        except Exception:
+            pass
+    def flush(self):
+        self.original.flush()
+        try:
+            self.log_file.flush()
+        except Exception:
+            pass
+
+
+# =============================================================================
+# RUN GUARD — prevent double-execution after Modal preemption
+# =============================================================================
+def _get_last_run(function_name):
+    """Get the last successful run timestamp for a cron function. Returns datetime or None."""
+    try:
+        with sqlite3.connect(DB_PATH, timeout=30) as conn:
+            row = conn.execute("SELECT value FROM state WHERE key = ?", (f"last_run_{function_name}",)).fetchone()
+            return datetime.fromisoformat(row[0]) if row else None
+    except Exception:
+        return None
+
+
+def _set_last_run(function_name):
+    """Record the current time as the last successful run for a cron function."""
+    try:
+        Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(DB_PATH, timeout=30) as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT)")
+            conn.execute(
+                "INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)",
+                (f"last_run_{function_name}", datetime.now().isoformat()),
+            )
+    except Exception as e:
+        print(f"WARNING: Failed to record last run time: {e}")
+
+
+# =============================================================================
 # CRON SCHEDULES
 # =============================================================================
 @app.function(
@@ -1144,12 +1204,22 @@ def _write_context(trade_actions, predictions, signals, summary, prev_context):
 )
 def pre_market_run():
     """Pre-market: predict + trade, 9:30 AM ET weekdays."""
-    import pytz
+    import sys, pytz
     et = pytz.timezone("US/Eastern")
     now_et = datetime.now(et)
-    if now_et.hour != 9 or now_et.minute != 30:
-        print(f"Skipping pre_market_run: ET time is {now_et.strftime('%H:%M')}, expected 09:30")
+    if now_et.hour != 9 or not (25 <= now_et.minute <= 35):
+        print(f"Skipping pre_market_run: ET time is {now_et.strftime('%H:%M')}, expected 09:25-09:35")
         return
+    last_run = _get_last_run("pre_market")
+    if last_run and (datetime.now() - last_run).total_seconds() < 1800:
+        print(f"Skipping pre_market_run: already ran {int((datetime.now() - last_run).total_seconds())}s ago")
+        return
+    _set_last_run("pre_market")
+    log_dir = Path(VOLUME_PATH) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = open(log_dir / f"pre_market_{now_et.strftime('%Y%m%d')}.log", "a")
+    old_stdout = sys.stdout
+    sys.stdout = _TeeWriter(old_stdout, log_file)
     try:
         run_trading_cycle.local()
     except Exception as e:
@@ -1185,13 +1255,45 @@ def pre_market_run():
 )
 def post_market_run():
     """Post-market: predict + rebalance + email report, 3:45 PM ET weekdays."""
-    import pytz
+    import sys, pytz
     et = pytz.timezone("US/Eastern")
     now_et = datetime.now(et)
-    if now_et.hour != 15 or now_et.minute != 45:
-        print(f"Skipping post_market_run: ET time is {now_et.strftime('%H:%M')}, expected 15:45")
+    if now_et.hour != 15 or not (40 <= now_et.minute <= 50):
+        print(f"Skipping post_market_run: ET time is {now_et.strftime('%H:%M')}, expected 15:40-15:50")
         return
-    run_trading_cycle.local(send_email=True)
+    last_run = _get_last_run("post_market")
+    if last_run and (datetime.now() - last_run).total_seconds() < 1800:
+        print(f"Skipping post_market_run: already ran {int((datetime.now() - last_run).total_seconds())}s ago")
+        return
+    _set_last_run("post_market")
+    log_dir = Path(VOLUME_PATH) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = open(log_dir / f"post_market_{now_et.strftime('%Y%m%d')}.log", "a")
+    old_stdout = sys.stdout
+    sys.stdout = _TeeWriter(old_stdout, log_file)
+    try:
+        run_trading_cycle.local(send_email=True)
+    except Exception as e:
+        print(f"FATAL ERROR in post_market_run: {type(e).__name__}: {e}")
+        try:
+            sender = os.environ.get("KRONOS_EMAIL", "")
+            password = os.environ.get("KRONOS_EMAIL_PASSWORD", "")
+            recipient = os.environ.get("KRONOS_RECIPIENT", sender)
+            if sender and password and recipient:
+                _send_email(
+                    subject=f"Kronos ERROR — post_market_run — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    body=f"FATAL ERROR in post-market run:\n\n{type(e).__name__}: {e}\n\nCheck Modal logs for details.",
+                    sender_email=sender,
+                    sender_password=password,
+                    recipient_email=recipient,
+                )
+        except Exception:
+            pass
+        raise
+    finally:
+        sys.stdout = old_stdout
+        log_file.close()
+        vol.commit()
 
 
 @app.function(
@@ -1211,6 +1313,11 @@ def update_data_morning():
     if now_et.hour != 8:
         print(f"Skipping update_data_morning: ET time is {now_et.strftime('%H:%M')}, expected 08:00")
         return
+    last_run = _get_last_run("data_morning")
+    if last_run and (datetime.now() - last_run).total_seconds() < 1800:
+        print(f"Skipping update_data_morning: already ran {int((datetime.now() - last_run).total_seconds())}s ago")
+        return
+    _set_last_run("data_morning")
     try:
         _run_data_update()
     except Exception as e:
@@ -1249,6 +1356,11 @@ def update_data_afternoon():
     if now_et.hour != 15:
         print(f"Skipping update_data_afternoon: ET time is {now_et.strftime('%H:%M')}, expected 15:00")
         return
+    last_run = _get_last_run("data_afternoon")
+    if last_run and (datetime.now() - last_run).total_seconds() < 1800:
+        print(f"Skipping update_data_afternoon: already ran {int((datetime.now() - last_run).total_seconds())}s ago")
+        return
+    _set_last_run("data_afternoon")
     try:
         _run_data_update()
     except Exception as e:
