@@ -67,12 +67,6 @@ CONTEXT_PATH = f"{VOLUME_PATH}/context.json"
 )
 def run_trading_cycle(send_email=False):
     """Main trading cycle — fetches data, runs inference, trades via Alpaca, emails report."""
-    import torch
-    import numpy as np
-    import pandas as pd
-    import requests
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     print(f"\n{'='*60}")
     print(f"  KRONOS TRADING ENGINE — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}\n")
@@ -82,26 +76,21 @@ def run_trading_cycle(send_email=False):
     except Exception as e:
         print(f"\nFATAL ERROR: {type(e).__name__}: {e}")
         print("Attempting to send error report email...")
-        if send_email:
-            try:
-                sender = os.environ.get("KRONOS_EMAIL", "")
-                password = os.environ.get("KRONOS_EMAIL_PASSWORD", "")
-                recipient = os.environ.get("KRONOS_RECIPIENT", sender)
-                if sender and password and recipient:
-                    _send_email(
-                        subject=f"Kronos ERROR — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                        body=f"FATAL ERROR in trading cycle:\n\n{type(e).__name__}: {e}\n\nCheck Modal logs for details.",
-                        sender_email=sender,
-                        sender_password=password,
-                        recipient_email=recipient,
-                    )
-            except Exception:
-                pass
+        try:
+            sender = os.environ.get("KRONOS_EMAIL", "")
+            password = os.environ.get("KRONOS_EMAIL_PASSWORD", "")
+            recipient = os.environ.get("KRONOS_RECIPIENT", sender)
+            if sender and password and recipient:
+                _send_email(
+                    subject=f"Kronos ERROR — trading cycle — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    body=f"FATAL ERROR in trading cycle:\n\n{type(e).__name__}: {e}\n\nCheck Modal logs for details.",
+                    sender_email=sender,
+                    sender_password=password,
+                    recipient_email=recipient,
+                )
+        except Exception:
+            pass
         raise
-    finally:
-        sys.stdout = old_stdout
-        log_file.close()
-        vol.commit()
 
 
 def _run_cycle_body(send_email):
@@ -1214,7 +1203,6 @@ def pre_market_run():
     if last_run and (datetime.now() - last_run).total_seconds() < 1800:
         print(f"Skipping pre_market_run: already ran {int((datetime.now() - last_run).total_seconds())}s ago")
         return
-    _set_last_run("pre_market")
     log_dir = Path(VOLUME_PATH) / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = open(log_dir / f"pre_market_{now_et.strftime('%Y%m%d')}.log", "a")
@@ -1222,6 +1210,7 @@ def pre_market_run():
     sys.stdout = _TeeWriter(old_stdout, log_file)
     try:
         run_trading_cycle.local()
+        _set_last_run("pre_market")
     except Exception as e:
         print(f"FATAL ERROR in pre_market_run: {type(e).__name__}: {e}")
         try:
@@ -1230,7 +1219,7 @@ def pre_market_run():
             recipient = os.environ.get("KRONOS_RECIPIENT", sender)
             if sender and password and recipient:
                 _send_email(
-                    subject=f"Kronos ERROR — pre_market_run — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    subject=f"Kronos ERROR — pre-market — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
                     body=f"FATAL ERROR in pre-market run:\n\n{type(e).__name__}: {e}\n\nCheck Modal logs for details.",
                     sender_email=sender,
                     sender_password=password,
@@ -1239,6 +1228,10 @@ def pre_market_run():
         except Exception:
             pass
         raise
+    finally:
+        sys.stdout = old_stdout
+        log_file.close()
+        vol.commit()
 
 
 @app.function(
@@ -1265,7 +1258,6 @@ def post_market_run():
     if last_run and (datetime.now() - last_run).total_seconds() < 1800:
         print(f"Skipping post_market_run: already ran {int((datetime.now() - last_run).total_seconds())}s ago")
         return
-    _set_last_run("post_market")
     log_dir = Path(VOLUME_PATH) / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = open(log_dir / f"post_market_{now_et.strftime('%Y%m%d')}.log", "a")
@@ -1273,6 +1265,7 @@ def post_market_run():
     sys.stdout = _TeeWriter(old_stdout, log_file)
     try:
         run_trading_cycle.local(send_email=True)
+        _set_last_run("post_market")
     except Exception as e:
         print(f"FATAL ERROR in post_market_run: {type(e).__name__}: {e}")
         try:
@@ -1281,7 +1274,7 @@ def post_market_run():
             recipient = os.environ.get("KRONOS_RECIPIENT", sender)
             if sender and password and recipient:
                 _send_email(
-                    subject=f"Kronos ERROR — post_market_run — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    subject=f"Kronos ERROR — post-market — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
                     body=f"FATAL ERROR in post-market run:\n\n{type(e).__name__}: {e}\n\nCheck Modal logs for details.",
                     sender_email=sender,
                     sender_password=password,
@@ -1301,6 +1294,7 @@ def post_market_run():
     volumes={VOLUME_PATH: vol},
     secrets=[
         modal.Secret.from_name("kronos-twelve-data"),
+        modal.Secret.from_name("kronos-email"),
     ],
     schedule=modal.Cron("0 12 * * 1-5"),
     timeout=3600,
@@ -1317,9 +1311,9 @@ def update_data_morning():
     if last_run and (datetime.now() - last_run).total_seconds() < 1800:
         print(f"Skipping update_data_morning: already ran {int((datetime.now() - last_run).total_seconds())}s ago")
         return
-    _set_last_run("data_morning")
     try:
         _run_data_update()
+        _set_last_run("data_morning")
     except Exception as e:
         print(f"FATAL ERROR in update_data_morning: {type(e).__name__}: {e}")
         try:
@@ -1328,7 +1322,7 @@ def update_data_morning():
             recipient = os.environ.get("KRONOS_RECIPIENT", sender)
             if sender and password and recipient:
                 _send_email(
-                    subject=f"Kronos ERROR — data update failed — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    subject=f"Kronos ERROR — morning data update — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
                     body=f"FATAL ERROR in morning data update:\n\n{type(e).__name__}: {e}\n\nCheck Modal logs for details.",
                     sender_email=sender,
                     sender_password=password,
@@ -1344,6 +1338,7 @@ def update_data_morning():
     volumes={VOLUME_PATH: vol},
     secrets=[
         modal.Secret.from_name("kronos-twelve-data"),
+        modal.Secret.from_name("kronos-email"),
     ],
     schedule=modal.Cron("0 19 * * 1-5"),
     timeout=3600,
@@ -1360,9 +1355,9 @@ def update_data_afternoon():
     if last_run and (datetime.now() - last_run).total_seconds() < 1800:
         print(f"Skipping update_data_afternoon: already ran {int((datetime.now() - last_run).total_seconds())}s ago")
         return
-    _set_last_run("data_afternoon")
     try:
         _run_data_update()
+        _set_last_run("data_afternoon")
     except Exception as e:
         print(f"FATAL ERROR in update_data_afternoon: {type(e).__name__}: {e}")
         try:
@@ -1371,7 +1366,7 @@ def update_data_afternoon():
             recipient = os.environ.get("KRONOS_RECIPIENT", sender)
             if sender and password and recipient:
                 _send_email(
-                    subject=f"Kronos ERROR — data update failed — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    subject=f"Kronos ERROR — afternoon data update — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
                     body=f"FATAL ERROR in afternoon data update:\n\n{type(e).__name__}: {e}\n\nCheck Modal logs for details.",
                     sender_email=sender,
                     sender_password=password,
