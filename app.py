@@ -342,7 +342,7 @@ def _run_cycle_body(send_email):
     print(f"\nCompleted predictions for {len(predictions)} stocks")
 
     # Store predictions for accuracy tracking + evaluate previous day's predictions
-    _store_predictions(predictions, prev_context)
+    _store_predictions(predictions)
     _evaluate_previous_predictions()
 
     # =========================================================================
@@ -489,9 +489,14 @@ class _AlpacaBroker:
                 CREATE TABLE IF NOT EXISTS prediction_accuracy (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT,
                     symbol TEXT, predicted_return REAL, actual_return REAL,
-                    correct INTEGER
+                    correct INTEGER, prediction_close REAL
                 );
             """)
+            # Migration: add prediction_close column if missing (for existing DBs)
+            try:
+                conn.execute("SELECT prediction_close FROM prediction_accuracy LIMIT 1")
+            except sqlite3.OperationalError:
+                conn.execute("ALTER TABLE prediction_accuracy ADD COLUMN prediction_close REAL")
 
     def reset_account(self):
         """Close all positions and cancel all orders. Fresh start."""
@@ -683,7 +688,7 @@ class _AlpacaBroker:
 
             # Volatility scaling: higher vol → smaller position
             realized_vol = pred.get("realized_vol", 0.30)
-            vol_scale = min(1.0, 0.20 / (realized_vol + 0.05))  # baseline 20% vol = 1.0x
+            vol_scale = min(1.0, 0.20 / (realized_vol + 0.05))  # baseline 15% vol = 1.0x
 
             # Model-driven allocation: score determines position size (up to 20% of buying power)
             base_pct = min(score / (score + 1.0), 0.20)
@@ -692,11 +697,14 @@ class _AlpacaBroker:
             # Sector diversification cap
             sector = sector_map.get(sym, "Unknown")
             current_sector_value = sector_exposure.get(sector, 0)
-            max_sector_value = total_market_value * SECTOR_CAP
-            sector_remaining = max(0, max_sector_value - current_sector_value)
-            # Cap position value at sector remaining (use buying_power as proxy if no market value yet)
             effective_bp = max(total_market_value, buy_power)
-            sector_cap_value = min(sector_remaining, effective_bp * position_pct)
+            if total_market_value > 0:
+                max_sector_value = total_market_value * SECTOR_CAP
+                sector_remaining = max(0, max_sector_value - current_sector_value)
+                sector_cap_value = min(sector_remaining, effective_bp * position_pct)
+            else:
+                # Cold start: no positions yet, skip sector cap
+                sector_cap_value = effective_bp * position_pct
             if sector_cap_value <= 0:
                 continue
 
@@ -1284,10 +1292,10 @@ def _get_dynamic_confidence(default=0.05):
     """
     try:
         with sqlite3.connect(DB_PATH, timeout=30) as conn:
-            # Get accuracy from last 5 trading days
+            # Get accuracy from last 5 trading days (only evaluated predictions)
             rows = conn.execute("""
                 SELECT correct FROM prediction_accuracy
-                WHERE date >= date('now', '-7 days')
+                WHERE date >= date('now', '-7 days') AND correct IS NOT NULL
                 ORDER BY id DESC LIMIT 200
             """).fetchall()
             if len(rows) < 20:
@@ -1306,29 +1314,30 @@ def _get_dynamic_confidence(default=0.05):
         return default
 
 
-def _store_predictions(predictions, prev_context):
+def _store_predictions(predictions):
     """Store predictions for future accuracy tracking. Records predicted return
-    so we can later compare against actual returns."""
+    and current close price so we can later compare against actual returns."""
     today = datetime.now().strftime("%Y-%m-%d")
     try:
         with sqlite3.connect(DB_PATH, timeout=30) as conn:
             for sym, pred in predictions.items():
                 conn.execute(
-                    "INSERT INTO prediction_accuracy (date, symbol, predicted_return, actual_return, correct) VALUES (?,?,?,?,?)",
-                    (today, sym, pred.get("predicted_return", 0), None, None),
+                    "INSERT INTO prediction_accuracy (date, symbol, predicted_return, actual_return, correct, prediction_close) VALUES (?,?,?,?,?,?)",
+                    (today, sym, pred.get("predicted_return", 0), None, None, pred.get("current_close", 0)),
                 )
     except Exception as e:
         print(f"WARNING: Failed to store predictions: {e}")
 
 
 def _evaluate_previous_predictions():
-    """Evaluate accuracy of previous day's predictions by comparing against actual returns."""
+    """Evaluate accuracy of previous day's predictions by comparing against actual returns.
+    Uses stored prediction_close price to compute actual return from the correct starting point."""
     try:
         with sqlite3.connect(DB_PATH, timeout=30) as conn:
-            # Find unevaluated predictions (actual_return IS NULL)
+            # Find unevaluated predictions (actual_return IS NULL) with stored prediction_close
             rows = conn.execute("""
-                SELECT id, symbol, predicted_return FROM prediction_accuracy
-                WHERE actual_return IS NULL AND date < date('now')
+                SELECT id, symbol, predicted_return, prediction_close FROM prediction_accuracy
+                WHERE actual_return IS NULL AND date < date('now') AND prediction_close IS NOT NULL
                 ORDER BY id DESC LIMIT 300
             """).fetchall()
             if not rows:
@@ -1337,16 +1346,17 @@ def _evaluate_previous_predictions():
             import pandas as pd
             cache_dir = Path(DATA_CACHE)
             evaluated = 0
-            for row_id, sym, predicted_return in rows:
+            for row_id, sym, predicted_return, prediction_close in rows:
                 try:
                     parquet_path = cache_dir / f"{sym}.parquet"
                     if not parquet_path.exists():
                         continue
                     df = pd.read_parquet(parquet_path)
-                    if len(df) < 5:
+                    if len(df) < 1 or prediction_close <= 0:
                         continue
-                    # Actual return over the next ~5 days (half of pred_len)
-                    actual_return = (float(df["close"].iloc[-1]) - float(df["close"].iloc[-6])) / float(df["close"].iloc[-6])
+                    # Actual return from prediction date close to latest close
+                    latest_close = float(df["close"].iloc[-1])
+                    actual_return = (latest_close - prediction_close) / prediction_close
                     actual_return = max(-0.20, min(0.20, actual_return))
                     # Correct if signs match (both positive or both negative)
                     correct = 1 if (predicted_return > 0) == (actual_return > 0) else 0
