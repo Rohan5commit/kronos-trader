@@ -218,13 +218,18 @@ def _run_cycle_body(send_email):
     vol.commit()
 
     # =========================================================================
-    # 5. RUN BATCH PREDICTIONS
+    # 5. RUN ENSEMBLE PREDICTIONS (multiple lookback windows + decay weighting)
     # =========================================================================
-    print(f"\nRunning predictions on {len(valid_data)} stocks...")
+    print(f"\nRunning ensemble predictions on {len(valid_data)} stocks...")
     predictor = KronosPredictor(model, tokenizer, device=str(device), max_context=512)
 
-    LOOKBACK = 400  # Must be < max_context (512) per Kronos design
+    ENSEMBLE_LOOKBACKS = [320, 360, 400]  # Multiple windows for variance reduction
     PRED_LEN = 10
+    DECAY_LAMBDA = 0.3  # Exponential decay for near vs far bar weighting
+
+    # Precompute decay weights: weight nearer predictions higher
+    decay_weights = np.array([np.exp(-DECAY_LAMBDA * i) for i in range(PRED_LEN)])
+    decay_weights = decay_weights / decay_weights.sum()  # normalize to sum=1
 
     predictions = {}
     symbols_list = list(valid_data.keys())
@@ -235,23 +240,7 @@ def _run_cycle_body(send_email):
         for sym in batch:
             try:
                 df = valid_data[sym]
-                if len(df) < LOOKBACK + 10:
-                    continue
-
-                x_hist = df.iloc[:LOOKBACK][["open", "high", "low", "close", "volume"]].copy()
-                x_hist["amount"] = 0.0
-                x_timestamp = pd.Series(df.iloc[:LOOKBACK]["timestamp"])
-
-                # Generate synthetic future timestamps (business day freq from last timestamp)
-                last_ts = x_timestamp.iloc[-1]
-                y_timestamp = pd.Series(pd.date_range(
-                    start=last_ts + pd.Timedelta(days=1),
-                    periods=PRED_LEN,
-                    freq="B",
-                ))
-
-                # Validate no NaN
-                if x_hist.isnull().values.any():
+                if len(df) < max(ENSEMBLE_LOOKBACKS) + 10:
                     continue
 
                 # Skip penny stocks BEFORE expensive GPU inference
@@ -259,45 +248,88 @@ def _run_cycle_body(send_email):
                 if current_close < 1.0:
                     continue
 
-                pred_df = predictor.predict(
-                    df=x_hist,
-                    x_timestamp=x_timestamp,
-                    y_timestamp=y_timestamp,
-                    pred_len=PRED_LEN,
-                    T=0.8,
-                    top_p=0.9,
-                    sample_count=1,
-                )
+                # Compute realized volatility (20-day) for volatility scaling
+                if len(df) >= 25:
+                    closes_25 = df["close"].values[-25:]
+                    log_returns = np.log(closes_25[1:] / closes_25[:-1])
+                    realized_vol = float(np.std(log_returns) * np.sqrt(252))
+                else:
+                    realized_vol = 0.30  # default moderate vol
 
-                current_close = float(df.iloc[-1]["close"])
-                predicted_close = float(pred_df["close"].iloc[-1])
+                # Ensemble: average predictions across multiple lookback windows
+                ensemble_returns = []
+                ensemble_confidences = []
+                ensemble_pred_stds = []
 
-                predicted_return = (predicted_close - current_close) / current_close
+                for lookback in ENSEMBLE_LOOKBACKS:
+                    if len(df) < lookback + 10:
+                        continue
 
-                # Cap predictions at ±20%
-                predicted_return = max(-0.20, min(0.20, predicted_return))
+                    x_hist = df.iloc[:lookback][["open", "high", "low", "close", "volume"]].copy()
+                    x_hist["amount"] = 0.0
+                    x_timestamp = pd.Series(df.iloc[:lookback]["timestamp"])
 
-                pred_std = float(pred_df["close"].std())
-                # Confidence: ratio of predicted return magnitude to trajectory volatility
-                # Higher = more certain the prediction is meaningful vs noise
-                pred_range = float(pred_df["close"].max() - pred_df["close"].min())
-                trajectory_stability = pred_range / (pred_std + 1e-8)
-                confidence = abs(predicted_return) * min(trajectory_stability, 10.0)
+                    last_ts = x_timestamp.iloc[-1]
+                    y_timestamp = pd.Series(pd.date_range(
+                        start=last_ts + pd.Timedelta(days=1),
+                        periods=PRED_LEN,
+                        freq="B",
+                    ))
+
+                    if x_hist.isnull().values.any():
+                        continue
+
+                    pred_df = predictor.predict(
+                        df=x_hist,
+                        x_timestamp=x_timestamp,
+                        y_timestamp=y_timestamp,
+                        pred_len=PRED_LEN,
+                        T=0.8,
+                        top_p=0.9,
+                        sample_count=1,
+                    )
+
+                    # Decay-weighted return: weight near-bar predictions higher
+                    pred_closes = pred_df["close"].values
+                    bar_returns = (pred_closes - current_close) / current_close
+                    weighted_return = float(np.sum(bar_returns * decay_weights))
+
+                    # Cap predictions at ±20%
+                    weighted_return = max(-0.20, min(0.20, weighted_return))
+
+                    pred_std = float(pred_df["close"].std())
+                    pred_range = float(pred_df["close"].max() - pred_df["close"].min())
+                    trajectory_stability = pred_range / (pred_std + 1e-8)
+                    confidence = abs(weighted_return) * min(trajectory_stability, 10.0)
+
+                    ensemble_returns.append(weighted_return)
+                    ensemble_confidences.append(confidence)
+                    ensemble_pred_stds.append(pred_std / current_close)
+
+                if not ensemble_returns:
+                    continue
+
+                # Average across ensemble members
+                predicted_return = float(np.mean(ensemble_returns))
+                confidence = float(np.mean(ensemble_confidences))
+                pred_std_pct = float(np.mean(ensemble_pred_stds))
 
                 # Skip if prediction is too noisy
-                pred_std_pct = pred_std / current_close
                 if pred_std_pct > 0.15:
                     continue
+
+                predicted_close = current_close * (1 + predicted_return)
 
                 predictions[sym] = {
                     "current_close": current_close,
                     "predicted_close": predicted_close,
                     "predicted_return": predicted_return,
                     "confidence": confidence,
-                    "pred_std_pct": pred_std / current_close,
+                    "pred_std_pct": pred_std_pct,
+                    "realized_vol": realized_vol,
                 }
                 if len(predictions) <= 5:
-                    print(f"  ✓ {sym}: return={predicted_return:+.2%}, conf={confidence:.3f}")
+                    print(f"  ✓ {sym}: return={predicted_return:+.2%}, conf={confidence:.3f}, vol={realized_vol:.2%}")
             except Exception as e:
                 if len(predictions) < 3:
                     print(f"  ✗ {sym}: {type(e).__name__}: {e}")
@@ -308,6 +340,10 @@ def _run_cycle_body(send_email):
             print(f"  Predicted {predicted_count}/{len(symbols_list)} stocks")
 
     print(f"\nCompleted predictions for {len(predictions)} stocks")
+
+    # Store predictions for accuracy tracking + evaluate previous day's predictions
+    _store_predictions(predictions, prev_context)
+    _evaluate_previous_predictions()
 
     # =========================================================================
     # 6. GENERATE TRADING SIGNALS
@@ -357,11 +393,15 @@ def _run_cycle_body(send_email):
             conn.execute("DELETE FROM state")
         print("Fresh start — Alpaca reset + local DB cleared")
 
+    # Dynamic confidence threshold based on recent prediction accuracy
+    dynamic_min_conf = _get_dynamic_confidence(default=0.05)
+    print(f"\nDynamic confidence threshold: {dynamic_min_conf:.3f}")
+
     try:
         trade_actions = broker.manage_positions(
             predictions, current_prices,
             max_positions=50,
-            min_confidence=0.05,
+            min_confidence=dynamic_min_conf,
         )
     except Exception as e:
         print(f"ERROR in trading: {type(e).__name__}: {e}")
@@ -446,6 +486,11 @@ class _AlpacaBroker:
                     positions_json TEXT, daily_pnl REAL, cumulative_pnl REAL
                 );
                 CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE IF NOT EXISTS prediction_accuracy (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT,
+                    symbol TEXT, predicted_return REAL, actual_return REAL,
+                    correct INTEGER
+                );
             """)
 
     def reset_account(self):
@@ -564,7 +609,8 @@ class _AlpacaBroker:
             )
 
     def manage_positions(self, predictions, current_prices, max_positions=50, min_confidence=0.005):
-        """Model-driven: sell where model predicts negative, buy top predictions."""
+        """Model-driven: sell where model predicts negative, buy top predictions.
+        Includes volatility scaling and sector diversification cap."""
         actions = []
 
         # Check if market is open — skip order placement if closed
@@ -575,6 +621,10 @@ class _AlpacaBroker:
         positions = self.get_positions()
         account = self.get_account()
         buy_power = account["buying_power"]
+
+        # Load sector map for diversification cap
+        sector_map = self._load_sector_map()
+        SECTOR_CAP = 0.40  # Max 40% of portfolio in any single sector
 
         # SELL: model predicts negative return or no prediction available
         for sym, pos in list(positions.items()):
@@ -593,6 +643,13 @@ class _AlpacaBroker:
         positions = self.get_positions()
         current_count = len(positions)
         slots = max_positions - current_count
+
+        # Compute current sector exposure
+        sector_exposure = {}
+        total_market_value = sum(p.get("market_value", 0) for p in positions.values())
+        for sym, pos in positions.items():
+            sector = sector_map.get(sym, "Unknown")
+            sector_exposure[sector] = sector_exposure.get(sector, 0) + abs(pos.get("market_value", 0))
 
         candidates = []
         for sym, pred in predictions.items():
@@ -624,10 +681,26 @@ class _AlpacaBroker:
             conf = pred.get("confidence", 0)
             ret = pred.get("predicted_return", 0)
 
+            # Volatility scaling: higher vol → smaller position
+            realized_vol = pred.get("realized_vol", 0.30)
+            vol_scale = min(1.0, 0.20 / (realized_vol + 0.05))  # baseline 20% vol = 1.0x
+
             # Model-driven allocation: score determines position size (up to 20% of buying power)
-            position_pct = min(score / (score + 1.0), 0.20)
-            position_value = buy_power * position_pct
-            position_value = min(position_value, buy_power * 0.95)
+            base_pct = min(score / (score + 1.0), 0.20)
+            position_pct = base_pct * vol_scale
+
+            # Sector diversification cap
+            sector = sector_map.get(sym, "Unknown")
+            current_sector_value = sector_exposure.get(sector, 0)
+            max_sector_value = total_market_value * SECTOR_CAP
+            sector_remaining = max(0, max_sector_value - current_sector_value)
+            # Cap position value at sector remaining (use buying_power as proxy if no market value yet)
+            effective_bp = max(total_market_value, buy_power)
+            sector_cap_value = min(sector_remaining, effective_bp * position_pct)
+            if sector_cap_value <= 0:
+                continue
+
+            position_value = min(sector_cap_value, buy_power * 0.95)
             shares = int(position_value / price)
 
             if shares > 0:
@@ -638,11 +711,24 @@ class _AlpacaBroker:
                         continue
                 except Exception:
                     pass
-                if self.submit_order(sym, shares, "buy", f"model_buy ret={ret:+.2%} conf={conf:.3f}"):
-                    actions.append(f"BUY {sym} x{shares} (ret={ret:+.2%}, conf={conf:.3f})")
+                if self.submit_order(sym, shares, "buy", f"model_buy ret={ret:+.2%} conf={conf:.3f} vol_scale={vol_scale:.2f}"):
+                    actions.append(f"BUY {sym} x{shares} (ret={ret:+.2%}, conf={conf:.3f}, vol={realized_vol:.1%})")
                     buy_power = self.get_account()["buying_power"]
+                    # Update sector tracking
+                    sector_exposure[sector] = sector_exposure.get(sector, 0) + (shares * price)
 
         return actions
+
+    def _load_sector_map(self):
+        """Load sector map from cached stocks.json (sectors fetched from Twelve Data)."""
+        sector_path = Path(VOLUME_PATH) / "sectors.json"
+        if sector_path.exists():
+            try:
+                with open(sector_path) as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
 
     def get_summary(self, prices, num_scanned=0):
         """Build summary dict from Alpaca account + SQLite trade log."""
@@ -746,9 +832,10 @@ class _AlpacaBroker:
 # =============================================================================
 
 def _fetch_stock_universe(api_keys, requests_mod):
-    """Fetch top US stocks from Twelve Data."""
+    """Fetch top US stocks from Twelve Data. Also caches sector info for diversification."""
     key_idx = 0
     symbols = []
+    sector_map = {}
     for exchange in ["NASDAQ", "NYSE", "AMEX"]:
         key = api_keys[key_idx % len(api_keys)]
         key_idx += 1
@@ -763,9 +850,21 @@ def _fetch_stock_universe(api_keys, requests_mod):
                 sym = s.get("symbol", "")
                 if sym and sym not in symbols:
                     symbols.append(sym)
+                    sector = s.get("sector", "")
+                    if sector:
+                        sector_map[sym] = sector
         except Exception as e:
             print(f"Error fetching {exchange}: {e}")
         time.sleep(1)
+    # Cache sector map
+    try:
+        sector_path = Path(VOLUME_PATH) / "sectors.json"
+        sector_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(sector_path, "w") as f:
+            json.dump(sector_map, f)
+        print(f"Cached sector data for {len(sector_map)} stocks")
+    except Exception:
+        pass
     return symbols[:1000]
 
 
@@ -1174,6 +1273,94 @@ def _set_last_run(function_name):
             )
     except Exception as e:
         print(f"WARNING: Failed to record last run time: {e}")
+
+
+def _get_dynamic_confidence(default=0.05):
+    """Compute dynamic confidence threshold based on recent prediction accuracy.
+
+    If recent predictions have been accurate, lower the threshold (trade more).
+    If inaccurate, raise the threshold (trade less).
+    Falls back to default if insufficient data.
+    """
+    try:
+        with sqlite3.connect(DB_PATH, timeout=30) as conn:
+            # Get accuracy from last 5 trading days
+            rows = conn.execute("""
+                SELECT correct FROM prediction_accuracy
+                WHERE date >= date('now', '-7 days')
+                ORDER BY id DESC LIMIT 200
+            """).fetchall()
+            if len(rows) < 20:
+                return default
+            accuracy = sum(r[0] for r in rows) / len(rows)
+            # Scale: 60%+ accuracy → lower threshold to 0.03, <40% → raise to 0.10
+            if accuracy >= 0.60:
+                return 0.03
+            elif accuracy >= 0.50:
+                return 0.04
+            elif accuracy >= 0.40:
+                return 0.06
+            else:
+                return 0.10
+    except Exception:
+        return default
+
+
+def _store_predictions(predictions, prev_context):
+    """Store predictions for future accuracy tracking. Records predicted return
+    so we can later compare against actual returns."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    try:
+        with sqlite3.connect(DB_PATH, timeout=30) as conn:
+            for sym, pred in predictions.items():
+                conn.execute(
+                    "INSERT INTO prediction_accuracy (date, symbol, predicted_return, actual_return, correct) VALUES (?,?,?,?,?)",
+                    (today, sym, pred.get("predicted_return", 0), None, None),
+                )
+    except Exception as e:
+        print(f"WARNING: Failed to store predictions: {e}")
+
+
+def _evaluate_previous_predictions():
+    """Evaluate accuracy of previous day's predictions by comparing against actual returns."""
+    try:
+        with sqlite3.connect(DB_PATH, timeout=30) as conn:
+            # Find unevaluated predictions (actual_return IS NULL)
+            rows = conn.execute("""
+                SELECT id, symbol, predicted_return FROM prediction_accuracy
+                WHERE actual_return IS NULL AND date < date('now')
+                ORDER BY id DESC LIMIT 300
+            """).fetchall()
+            if not rows:
+                return
+            # Load cached data to compute actual returns
+            import pandas as pd
+            cache_dir = Path(DATA_CACHE)
+            evaluated = 0
+            for row_id, sym, predicted_return in rows:
+                try:
+                    parquet_path = cache_dir / f"{sym}.parquet"
+                    if not parquet_path.exists():
+                        continue
+                    df = pd.read_parquet(parquet_path)
+                    if len(df) < 5:
+                        continue
+                    # Actual return over the next ~5 days (half of pred_len)
+                    actual_return = (float(df["close"].iloc[-1]) - float(df["close"].iloc[-6])) / float(df["close"].iloc[-6])
+                    actual_return = max(-0.20, min(0.20, actual_return))
+                    # Correct if signs match (both positive or both negative)
+                    correct = 1 if (predicted_return > 0) == (actual_return > 0) else 0
+                    conn.execute(
+                        "UPDATE prediction_accuracy SET actual_return=?, correct=? WHERE id=?",
+                        (actual_return, correct, row_id),
+                    )
+                    evaluated += 1
+                except Exception:
+                    pass
+            if evaluated > 0:
+                print(f"  Evaluated {evaluated} previous predictions for accuracy tracking")
+    except Exception as e:
+        print(f"WARNING: Failed to evaluate predictions: {e}")
 
 
 # =============================================================================
