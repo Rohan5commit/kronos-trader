@@ -223,7 +223,7 @@ def _run_cycle_body(send_email):
     print(f"\nRunning ensemble predictions on {len(valid_data)} stocks...")
     predictor = KronosPredictor(model, tokenizer, device=str(device), max_context=512)
 
-    ENSEMBLE_LOOKBACKS = [320, 360, 400]  # Multiple windows for variance reduction
+    ENSEMBLE_LOOKBACKS = [200, 320, 360, 400]  # Fallback: stocks with 210+ bars get at least one prediction
     PRED_LEN = 10
     DECAY_LAMBDA = 0.3  # Exponential decay for near vs far bar weighting
 
@@ -240,7 +240,7 @@ def _run_cycle_body(send_email):
         for sym in batch:
             try:
                 df = valid_data[sym]
-                if len(df) < max(ENSEMBLE_LOOKBACKS) + 10:
+                if len(df) < 110:  # Minimum viable: need at least 100 bars + buffer
                     continue
 
                 # Skip penny stocks BEFORE expensive GPU inference
@@ -256,7 +256,7 @@ def _run_cycle_body(send_email):
                 else:
                     realized_vol = 0.30  # default moderate vol
 
-                # Ensemble: average predictions across multiple lookback windows
+                # Ensemble: average predictions across available lookback windows
                 ensemble_returns = []
                 ensemble_confidences = []
                 ensemble_pred_stds = []
@@ -294,15 +294,14 @@ def _run_cycle_body(send_email):
                     bar_returns = (pred_closes - current_close) / current_close
                     weighted_return = float(np.sum(bar_returns * decay_weights))
 
-                    # Cap predictions at ±20%
-                    weighted_return = max(-0.20, min(0.20, weighted_return))
+                    # Store raw (uncapped) return — used for ranking
+                    ensemble_returns.append(weighted_return)
 
                     pred_std = float(pred_df["close"].std())
                     pred_range = float(pred_df["close"].max() - pred_df["close"].min())
                     trajectory_stability = pred_range / (pred_std + 1e-8)
                     confidence = abs(weighted_return) * min(trajectory_stability, 10.0)
 
-                    ensemble_returns.append(weighted_return)
                     ensemble_confidences.append(confidence)
                     ensemble_pred_stds.append(pred_std / current_close)
 
@@ -310,7 +309,7 @@ def _run_cycle_body(send_email):
                     continue
 
                 # Average across ensemble members
-                predicted_return = float(np.mean(ensemble_returns))
+                raw_return = float(np.mean(ensemble_returns))
                 confidence = float(np.mean(ensemble_confidences))
                 pred_std_pct = float(np.mean(ensemble_pred_stds))
 
@@ -318,18 +317,21 @@ def _run_cycle_body(send_email):
                 if pred_std_pct > 0.15:
                     continue
 
+                # Cap for position sizing at ±50% (not ±20% — preserves signal differentiation)
+                predicted_return = max(-0.50, min(0.50, raw_return))
                 predicted_close = current_close * (1 + predicted_return)
 
                 predictions[sym] = {
                     "current_close": current_close,
                     "predicted_close": predicted_close,
                     "predicted_return": predicted_return,
+                    "raw_return": raw_return,
                     "confidence": confidence,
                     "pred_std_pct": pred_std_pct,
                     "realized_vol": realized_vol,
                 }
                 if len(predictions) <= 5:
-                    print(f"  ✓ {sym}: return={predicted_return:+.2%}, conf={confidence:.3f}, vol={realized_vol:.2%}")
+                    print(f"  ✓ {sym}: raw={raw_return:+.2%}, capped={predicted_return:+.2%}, conf={confidence:.3f}, vol={realized_vol:.2%}")
             except Exception as e:
                 if len(predictions) < 3:
                     print(f"  ✗ {sym}: {type(e).__name__}: {e}")
@@ -400,7 +402,7 @@ def _run_cycle_body(send_email):
     try:
         trade_actions = broker.manage_positions(
             predictions, current_prices,
-            max_positions=50,
+            max_positions=60,
             min_confidence=dynamic_min_conf,
         )
     except Exception as e:
@@ -613,7 +615,7 @@ class _AlpacaBroker:
                 (symbol, action, shares, price, price * shares if shares and price else 0, datetime.now().isoformat(), reason),
             )
 
-    def manage_positions(self, predictions, current_prices, max_positions=50, min_confidence=0.005):
+    def manage_positions(self, predictions, current_prices, max_positions=60, min_confidence=0.005):
         """Model-driven: sell where model predicts negative, buy top predictions.
         Includes volatility scaling and sector diversification cap."""
         actions = []
@@ -629,22 +631,21 @@ class _AlpacaBroker:
 
         # Load sector map for diversification cap
         sector_map = self._load_sector_map()
-        SECTOR_CAP = 0.40  # Max 40% of portfolio in any single sector
+        SECTOR_CAP = 0.50  # Max 50% of portfolio in any single sector
 
-        # SELL: model predicts negative return or no prediction available
+        # SELL: only when model actively predicts negative with sufficient confidence
+        # Do NOT sell when prediction is missing — hold instead
         for sym, pos in list(positions.items()):
             pred = predictions.get(sym)
             if pred is None:
-                if self.close_position(sym, "no_prediction"):
-                    actions.append(f"SELL {sym} (no prediction)")
-                continue
+                continue  # No prediction available — hold position
             ret = pred.get("predicted_return", 0)
             conf = pred.get("confidence", 0)
             if ret < 0 and conf >= min_confidence:
                 if self.close_position(sym, f"model_sell ret={ret:+.2%} conf={conf:.3f}"):
                     actions.append(f"SELL {sym} (ret={ret:+.2%})")
 
-        # BUY: rank by return * confidence
+        # BUY: rank by raw_return * confidence (uses uncapped return for differentiation)
         positions = self.get_positions()
         current_count = len(positions)
         slots = max_positions - current_count
@@ -660,12 +661,12 @@ class _AlpacaBroker:
         for sym, pred in predictions.items():
             if sym in positions:
                 continue
-            ret = pred.get("predicted_return", 0)
+            raw_ret = pred.get("raw_return", pred.get("predicted_return", 0))
             conf = pred.get("confidence", 0)
             pred_std_pct = pred.get("pred_std_pct", 0)
-            if ret <= 0 or conf < min_confidence or pred_std_pct > 0.08:
+            if raw_ret <= 0 or conf < min_confidence or pred_std_pct > 0.12:
                 continue
-            candidates.append((sym, pred, ret * conf))
+            candidates.append((sym, pred, raw_ret * conf))
 
         candidates.sort(key=lambda x: x[2], reverse=True)
 
@@ -688,7 +689,7 @@ class _AlpacaBroker:
 
             # Volatility scaling: higher vol → smaller position
             realized_vol = pred.get("realized_vol", 0.30)
-            vol_scale = min(1.0, 0.20 / (realized_vol + 0.05))  # baseline 15% vol = 1.0x
+            vol_scale = min(1.0, 0.25 / (realized_vol + 0.05))  # baseline 20% vol = 1.0x
 
             # Model-driven allocation: score determines position size (up to 20% of buying power)
             base_pct = min(score / (score + 1.0), 0.20)
@@ -1010,20 +1011,20 @@ def _update_latest_bars(api_keys, symbols, cached_data, cache_dir, requests_mod,
 
 
 def _generate_signals(predictions, stock_data, np_mod):
-    """Generate ranked trading signals."""
+    """Generate ranked trading signals using raw (uncapped) returns for differentiation."""
     signals = []
     for sym, pred in predictions.items():
-        predicted_return = pred.get("predicted_return", 0)
+        raw_return = pred.get("raw_return", pred.get("predicted_return", 0))
         confidence = pred.get("confidence", 0)
         pred_std_pct = pred.get("pred_std_pct", 0)
         current_close = pred.get("current_close", 0)
 
         # Skip penny stocks and high-noise predictions
-        if current_close < 1.0 or confidence < 0.005 or pred_std_pct > 0.08:
+        if current_close < 1.0 or confidence < 0.005 or pred_std_pct > 0.12:
             continue
 
         vol_score = 1.0 / (pred_std_pct + 0.01)
-        score = 0.60 * predicted_return + 0.25 * float(np_mod.tanh(confidence)) + 0.15 * float(np_mod.tanh(vol_score))
+        score = 0.60 * raw_return + 0.25 * float(np_mod.tanh(confidence)) + 0.15 * float(np_mod.tanh(vol_score))
 
         hist = stock_data.get(sym)
         if hist is not None and len(hist) >= 20:
@@ -1034,10 +1035,11 @@ def _generate_signals(predictions, stock_data, np_mod):
             if momentum > 0:
                 score *= 1.2
 
-        action = "buy" if predicted_return > 0.005 else ("sell" if predicted_return < -0.005 else "hold")
+        action = "buy" if raw_return > 0.005 else ("sell" if raw_return < -0.005 else "hold")
         signals.append({
             "symbol": sym, "action": action, "score": score,
-            "predicted_return": predicted_return, "confidence": confidence,
+            "predicted_return": pred.get("predicted_return", 0), "raw_return": raw_return,
+            "confidence": confidence,
             "current_close": pred["current_close"],
             "predicted_close": pred.get("predicted_close", 0),
         })
