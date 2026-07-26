@@ -1,0 +1,55 @@
+name: Trading Cycle
+on:
+  cron:
+    - cron: '30 13 * * 1-5'  # 9:30 AM ET pre-market
+    - cron: '45 19 * * 1-5'  # 3:45 PM ET post-market
+  workflow_dispatch:
+    inputs:
+      send_email:
+        description: 'Send email report'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Clone Kronos model repo
+        run: git clone https://github.com/shiyu-coder/Kronos.git /tmp/kronos_repo
+
+      - name: Run trading cycle
+        run: python app.py --mode trading-cycle
+        env:
+          TWELVE_DATA_KEYS: ${{ secrets.TWELVE_DATA_KEYS }}
+          KRONOS_ALPACA_KEY_ID: ${{ secrets.KRONOS_ALPACA_KEY_ID }}
+          KRONOS_ALPACA_SECRET_KEY: ${{ secrets.KRONOS_ALPACA_SECRET_KEY }}
+          KRONOS_EMAIL: ${{ secrets.KRONOS_EMAIL }}
+          KRONOS_EMAIL_PASSWORD: ${{ secrets.KRONOS_EMAIL_PASSWORD }}
+          KRONOS_RECIPIENT: ${{ secrets.KRONOS_RECIPIENT }}
+          KRONOS_SEND_EMAIL: ${{ github.event.inputs.send_email || 'true' }}
+          PYTHONPATH: /tmp/kronos_repo
+
+      - name: Commit data changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Trading cycle data update"
+          file_pattern: 'data/'
+          commit_user_name: "Kronos Bot"
+          commit_user_email: "kronos-bot@users.noreply.github.com"

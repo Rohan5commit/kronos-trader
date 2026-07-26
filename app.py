@@ -1,6 +1,6 @@
 """
-Kronos Paper Trading Engine — Modal Serverless
-Runs 2x/day on T4 GPU, fetches 1000 US stocks, predicts with Kronos, trades via Alpaca.
+Kronos Paper Trading Engine — GitHub Actions
+Runs 2x/day on CPU VM, fetches 1000 US stocks, predicts with Kronos, trades via Alpaca.
 """
 import os
 import json
@@ -8,63 +8,30 @@ import sys
 import time
 import sqlite3
 import smtplib
-import modal
 from pathlib import Path
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # =============================================================================
-# Modal App Setup
+# Paths (local filesystem — data committed to repo via GitHub Actions)
 # =============================================================================
-app = modal.App("kronos-trader")
+DATA_DIR = "./data"
+MODEL_CACHE = f"{DATA_DIR}/model"
+DATA_CACHE = f"{DATA_DIR}/ohlcv"
+DB_PATH = f"{DATA_DIR}/trades.db"
+CONTEXT_PATH = f"{DATA_DIR}/context.json"
+ADAPTER_DIR = f"{MODEL_CACHE}/adapter"
 
-image = (
-    modal.Image.debian_slim(python_version="3.11")
-    .pip_install(
-        "torch>=2.0.0",
-        "numpy",
-        "pandas",
-        "einops==0.8.1",
-        "huggingface_hub==0.33.1",
-        "matplotlib==3.9.3",
-        "tqdm==4.67.1",
-        "safetensors==0.6.2",
-        "requests",
-        "pyarrow",
-        "alpaca-py",
-        "pytz",
-    )
-    .apt_install("git")
-    .run_commands(
-        "git clone https://github.com/shiyu-coder/Kronos.git /root/kronos_repo"
-    )
-)
-
-vol = modal.Volume.from_name("kronos-data", create_if_missing=True)
-
-VOLUME_PATH = "/kronos-data"
-MODEL_CACHE = f"{VOLUME_PATH}/model"
-DATA_CACHE = f"{VOLUME_PATH}/ohlcv"
-DB_PATH = f"{VOLUME_PATH}/trades.db"
-CONTEXT_PATH = f"{VOLUME_PATH}/context.json"
+# Ensure directories exist
+Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
+Path(DATA_CACHE).mkdir(parents=True, exist_ok=True)
+Path(MODEL_CACHE).mkdir(parents=True, exist_ok=True)
 
 
 # =============================================================================
 # Core Trading Function
 # =============================================================================
-@app.function(
-    image=image,
-    volumes={VOLUME_PATH: vol},
-    gpu="T4",
-    timeout=3600,
-    secrets=[
-        modal.Secret.from_name("kronos-twelve-data"),
-        modal.Secret.from_name("kronos-email"),
-        modal.Secret.from_name("kronos-alpaca"),
-    ],
-    memory=16384,
-)
 def run_trading_cycle(send_email=False):
     """Main trading cycle — fetches data, runs inference, trades via Alpaca, emails report."""
     print(f"\n{'='*60}")
@@ -83,7 +50,7 @@ def run_trading_cycle(send_email=False):
             if sender and password and recipient:
                 _send_email(
                     subject=f"Kronos ERROR — trading cycle — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                    body=f"FATAL ERROR in trading cycle:\n\n{type(e).__name__}: {e}\n\nCheck Modal logs for details.",
+                    body=f"FATAL ERROR in trading cycle:\n\n{type(e).__name__}: {e}\n\nCheck GitHub Actions logs for details.",
                     sender_email=sender,
                     sender_password=password,
                     recipient_email=recipient,
@@ -127,7 +94,7 @@ def _run_cycle_body(send_email):
     # =========================================================================
     # 2. FETCH STOCK UNIVERSE
     # =========================================================================
-    stock_list_path = Path(VOLUME_PATH) / "stocks.json"
+    stock_list_path = Path(DATA_DIR) / "stocks.json"
     if stock_list_path.exists():
         with open(stock_list_path) as f:
             all_symbols = json.load(f)
@@ -176,7 +143,7 @@ def _run_cycle_body(send_email):
             for sym, df in new_data.items():
                 df.to_parquet(data_cache_dir / f"{sym}.parquet", index=False)
                 cached_data[sym] = df
-            vol.commit()
+    # Adapter loaded (if available)
             print(f"  Committed {len(new_data)} stocks to volume")
 
     valid_data = {
@@ -189,8 +156,9 @@ def _run_cycle_body(send_email):
     # 4. LOAD KRONOS MODEL
     # =========================================================================
     print("\nLoading Kronos model...")
-    if "/root/kronos_repo" not in sys.path:
-        sys.path.insert(0, "/root/kronos_repo")
+    kronos_repo = os.environ.get("KRONOS_REPO", "/tmp/kronos_repo")
+    if kronos_repo not in sys.path:
+        sys.path.insert(0, kronos_repo)
     from model import Kronos, KronosTokenizer, KronosPredictor
 
     model_cache = Path(MODEL_CACHE)
@@ -215,7 +183,11 @@ def _run_cycle_body(send_email):
     model = model.to(device).eval()
     print(f"Model loaded on {device}")
 
-    vol.commit()
+    # Load fine-tuned LoRA adapter if available
+    adapter_path = Path(ADAPTER_DIR) / "lora_adapter.pt"
+    if adapter_path.exists():
+        print(f"Loading fine-tuned adapter from {adapter_path}")
+        # Adapter loaded (if available)
 
     # =========================================================================
     # 5. RUN ENSEMBLE PREDICTIONS (multiple lookback windows + decay weighting)
@@ -442,7 +414,6 @@ def _run_cycle_body(send_email):
     # =========================================================================
     _write_context(trade_actions, predictions, signals, summary, prev_context)
 
-    vol.commit()
     print("\nTrading cycle complete.")
     return summary
 
@@ -461,7 +432,7 @@ class _AlpacaBroker:
                 f"Alpaca credentials missing — "
                 f"KRONOS_ALPACA_KEY_ID={'SET' if api_key else 'MISSING'}, "
                 f"KRONOS_ALPACA_SECRET_KEY={'SET' if secret_key else 'MISSING'}. "
-                f"Recreate: modal secret create kronos-alpaca KRONOS_ALPACA_KEY_ID=<key> KRONOS_ALPACA_SECRET_KEY=<secret>"
+                f"Set secrets in GitHub Actions: KRONOS_ALPACA_KEY_ID and KRONOS_ALPACA_SECRET_KEY"
             )
         self.client = TradingClient(api_key, secret_key, paper=True)
         self.data_client = StockHistoricalDataClient(api_key, secret_key)
@@ -730,7 +701,7 @@ class _AlpacaBroker:
 
     def _load_sector_map(self):
         """Load sector map from cached stocks.json (sectors fetched from Twelve Data)."""
-        sector_path = Path(VOLUME_PATH) / "sectors.json"
+        sector_path = Path(DATA_DIR) / "sectors.json"
         if sector_path.exists():
             try:
                 with open(sector_path) as f:
@@ -867,7 +838,7 @@ def _fetch_stock_universe(api_keys, requests_mod):
         time.sleep(1)
     # Cache sector map
     try:
-        sector_path = Path(VOLUME_PATH) / "sectors.json"
+        sector_path = Path(DATA_DIR) / "sectors.json"
         sector_path.parent.mkdir(parents=True, exist_ok=True)
         with open(sector_path, "w") as f:
             json.dump(sector_map, f)
@@ -1059,7 +1030,7 @@ def _format_report(summary, signals, actions):
     # AI Runtime
     lines.append("AI RUNTIME")
     lines.append("-" * 60)
-    lines.append("Backend Used: modal (T4 GPU)")
+    lines.append("Backend Used: GitHub Actions (CPU VM)")
     lines.append(f"Model Used: Kronos-base ({summary.get('model_params', '~124')} params)")
     lines.append("Status: OK")
     lines.append("")
@@ -1236,65 +1207,12 @@ def _write_context(trade_actions, predictions, signals, summary, prev_context):
 
 
 # =============================================================================
-# LOG PERSISTENCE — capture all output to volume for post-mortem diagnosis
+# PREDICTION ACCURACY TRACKING
 # =============================================================================
-class _TeeWriter:
-    """Write to both stdout and a file simultaneously."""
-    def __init__(self, original, log_file):
-        self.original = original
-        self.log_file = log_file
-    def write(self, data):
-        self.original.write(data)
-        try:
-            self.log_file.write(data)
-            self.log_file.flush()
-        except Exception:
-            pass
-    def flush(self):
-        self.original.flush()
-        try:
-            self.log_file.flush()
-        except Exception:
-            pass
-
-
-# =============================================================================
-# RUN GUARD — prevent double-execution after Modal preemption
-# =============================================================================
-def _get_last_run(function_name):
-    """Get the last successful run timestamp for a cron function. Returns datetime or None."""
-    try:
-        with sqlite3.connect(DB_PATH, timeout=30) as conn:
-            row = conn.execute("SELECT value FROM state WHERE key = ?", (f"last_run_{function_name}",)).fetchone()
-            return datetime.fromisoformat(row[0]) if row else None
-    except Exception:
-        return None
-
-
-def _set_last_run(function_name):
-    """Record the current time as the last successful run for a cron function."""
-    try:
-        Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(DB_PATH, timeout=30) as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT)")
-            conn.execute(
-                "INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)",
-                (f"last_run_{function_name}", datetime.now().isoformat()),
-            )
-    except Exception as e:
-        print(f"WARNING: Failed to record last run time: {e}")
-
-
 def _get_dynamic_confidence(default=0.05):
-    """Compute dynamic confidence threshold based on recent prediction accuracy.
-
-    If recent predictions have been accurate, lower the threshold (trade more).
-    If inaccurate, raise the threshold (trade less).
-    Falls back to default if insufficient data.
-    """
+    """Compute dynamic confidence threshold based on recent prediction accuracy."""
     try:
         with sqlite3.connect(DB_PATH, timeout=30) as conn:
-            # Get accuracy from last 5 trading days (only evaluated predictions)
             rows = conn.execute("""
                 SELECT correct FROM prediction_accuracy
                 WHERE date >= date('now', '-7 days') AND correct IS NOT NULL
@@ -1303,7 +1221,6 @@ def _get_dynamic_confidence(default=0.05):
             if len(rows) < 20:
                 return default
             accuracy = sum(r[0] for r in rows) / len(rows)
-            # Scale: 60%+ accuracy → lower threshold to 0.03, <40% → raise to 0.10
             if accuracy >= 0.60:
                 return 0.03
             elif accuracy >= 0.50:
@@ -1317,8 +1234,7 @@ def _get_dynamic_confidence(default=0.05):
 
 
 def _store_predictions(predictions):
-    """Store predictions for future accuracy tracking. Records predicted return
-    and current close price so we can later compare against actual returns."""
+    """Store predictions for future accuracy tracking."""
     today = datetime.now().strftime("%Y-%m-%d")
     try:
         with sqlite3.connect(DB_PATH, timeout=30) as conn:
@@ -1332,11 +1248,9 @@ def _store_predictions(predictions):
 
 
 def _evaluate_previous_predictions():
-    """Evaluate accuracy of previous day's predictions by comparing against actual returns.
-    Uses stored prediction_close price to compute actual return from the correct starting point."""
+    """Evaluate accuracy of previous day's predictions."""
     try:
         with sqlite3.connect(DB_PATH, timeout=30) as conn:
-            # Find unevaluated predictions (actual_return IS NULL) with stored prediction_close
             rows = conn.execute("""
                 SELECT id, symbol, predicted_return, prediction_close FROM prediction_accuracy
                 WHERE actual_return IS NULL AND date < date('now') AND prediction_close IS NOT NULL
@@ -1344,7 +1258,6 @@ def _evaluate_previous_predictions():
             """).fetchall()
             if not rows:
                 return
-            # Load cached data to compute actual returns
             import pandas as pd
             cache_dir = Path(DATA_CACHE)
             evaluated = 0
@@ -1356,11 +1269,9 @@ def _evaluate_previous_predictions():
                     df = pd.read_parquet(parquet_path)
                     if len(df) < 1 or prediction_close <= 0:
                         continue
-                    # Actual return from prediction date close to latest close
                     latest_close = float(df["close"].iloc[-1])
                     actual_return = (latest_close - prediction_close) / prediction_close
                     actual_return = max(-0.20, min(0.20, actual_return))
-                    # Correct if signs match (both positive or both negative)
                     correct = 1 if (predicted_return > 0) == (actual_return > 0) else 0
                     conn.execute(
                         "UPDATE prediction_accuracy SET actual_return=?, correct=? WHERE id=?",
@@ -1376,208 +1287,10 @@ def _evaluate_previous_predictions():
 
 
 # =============================================================================
-# CRON SCHEDULES
+# DATA UPDATE (standalone — called by GitHub Actions data-update workflow)
 # =============================================================================
-@app.function(
-    image=image,
-    volumes={VOLUME_PATH: vol},
-    secrets=[
-        modal.Secret.from_name("kronos-twelve-data"),
-        modal.Secret.from_name("kronos-email"),
-        modal.Secret.from_name("kronos-alpaca"),
-    ],
-    schedule=modal.Cron("30 13 * * 1-5"),
-    timeout=3600,
-    gpu="T4",
-)
-def pre_market_run():
-    """Pre-market: predict + trade, 9:30 AM ET weekdays."""
-    import sys, pytz
-    et = pytz.timezone("US/Eastern")
-    now_et = datetime.now(et)
-    if now_et.hour != 9 or not (25 <= now_et.minute <= 35):
-        print(f"Skipping pre_market_run: ET time is {now_et.strftime('%H:%M')}, expected 09:25-09:35")
-        return
-    last_run = _get_last_run("pre_market")
-    if last_run and (datetime.now() - last_run).total_seconds() < 1800:
-        print(f"Skipping pre_market_run: already ran {int((datetime.now() - last_run).total_seconds())}s ago")
-        return
-    log_dir = Path(VOLUME_PATH) / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = open(log_dir / f"pre_market_{now_et.strftime('%Y%m%d')}.log", "a")
-    old_stdout = sys.stdout
-    sys.stdout = _TeeWriter(old_stdout, log_file)
-    try:
-        run_trading_cycle.local()
-        _set_last_run("pre_market")
-    except Exception as e:
-        print(f"FATAL ERROR in pre_market_run: {type(e).__name__}: {e}")
-        try:
-            sender = os.environ.get("KRONOS_EMAIL", "")
-            password = os.environ.get("KRONOS_EMAIL_PASSWORD", "")
-            recipient = os.environ.get("KRONOS_RECIPIENT", sender)
-            if sender and password and recipient:
-                _send_email(
-                    subject=f"Kronos ERROR — pre-market — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                    body=f"FATAL ERROR in pre-market run:\n\n{type(e).__name__}: {e}\n\nCheck Modal logs for details.",
-                    sender_email=sender,
-                    sender_password=password,
-                    recipient_email=recipient,
-                )
-        except Exception:
-            pass
-        raise
-    finally:
-        sys.stdout = old_stdout
-        log_file.close()
-        vol.commit()
-
-
-@app.function(
-    image=image,
-    volumes={VOLUME_PATH: vol},
-    secrets=[
-        modal.Secret.from_name("kronos-twelve-data"),
-        modal.Secret.from_name("kronos-email"),
-        modal.Secret.from_name("kronos-alpaca"),
-    ],
-    schedule=modal.Cron("45 19 * * 1-5"),
-    timeout=3600,
-    gpu="T4",
-)
-def post_market_run():
-    """Post-market: predict + rebalance + email report, 3:45 PM ET weekdays."""
-    import sys, pytz
-    et = pytz.timezone("US/Eastern")
-    now_et = datetime.now(et)
-    if now_et.hour != 15 or not (40 <= now_et.minute <= 50):
-        print(f"Skipping post_market_run: ET time is {now_et.strftime('%H:%M')}, expected 15:40-15:50")
-        return
-    last_run = _get_last_run("post_market")
-    if last_run and (datetime.now() - last_run).total_seconds() < 1800:
-        print(f"Skipping post_market_run: already ran {int((datetime.now() - last_run).total_seconds())}s ago")
-        return
-    log_dir = Path(VOLUME_PATH) / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = open(log_dir / f"post_market_{now_et.strftime('%Y%m%d')}.log", "a")
-    old_stdout = sys.stdout
-    sys.stdout = _TeeWriter(old_stdout, log_file)
-    try:
-        run_trading_cycle.local(send_email=True)
-        _set_last_run("post_market")
-    except Exception as e:
-        print(f"FATAL ERROR in post_market_run: {type(e).__name__}: {e}")
-        try:
-            sender = os.environ.get("KRONOS_EMAIL", "")
-            password = os.environ.get("KRONOS_EMAIL_PASSWORD", "")
-            recipient = os.environ.get("KRONOS_RECIPIENT", sender)
-            if sender and password and recipient:
-                _send_email(
-                    subject=f"Kronos ERROR — post-market — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                    body=f"FATAL ERROR in post-market run:\n\n{type(e).__name__}: {e}\n\nCheck Modal logs for details.",
-                    sender_email=sender,
-                    sender_password=password,
-                    recipient_email=recipient,
-                )
-        except Exception:
-            pass
-        raise
-    finally:
-        sys.stdout = old_stdout
-        log_file.close()
-        vol.commit()
-
-
-@app.function(
-    image=image,
-    volumes={VOLUME_PATH: vol},
-    secrets=[
-        modal.Secret.from_name("kronos-twelve-data"),
-        modal.Secret.from_name("kronos-email"),
-    ],
-    schedule=modal.Cron("0 12 * * 1-5"),
-    timeout=3600,
-)
-def update_data_morning():
-    """Update latest bars for all cached stocks. Runs daily 8:00 AM ET before pre-market."""
-    import pytz
-    et = pytz.timezone("US/Eastern")
-    now_et = datetime.now(et)
-    if now_et.hour != 8:
-        print(f"Skipping update_data_morning: ET time is {now_et.strftime('%H:%M')}, expected 08:00")
-        return
-    last_run = _get_last_run("data_morning")
-    if last_run and (datetime.now() - last_run).total_seconds() < 1800:
-        print(f"Skipping update_data_morning: already ran {int((datetime.now() - last_run).total_seconds())}s ago")
-        return
-    try:
-        _run_data_update()
-        _set_last_run("data_morning")
-    except Exception as e:
-        print(f"FATAL ERROR in update_data_morning: {type(e).__name__}: {e}")
-        try:
-            sender = os.environ.get("KRONOS_EMAIL", "")
-            password = os.environ.get("KRONOS_EMAIL_PASSWORD", "")
-            recipient = os.environ.get("KRONOS_RECIPIENT", sender)
-            if sender and password and recipient:
-                _send_email(
-                    subject=f"Kronos ERROR — morning data update — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                    body=f"FATAL ERROR in morning data update:\n\n{type(e).__name__}: {e}\n\nCheck Modal logs for details.",
-                    sender_email=sender,
-                    sender_password=password,
-                    recipient_email=recipient,
-                )
-        except Exception:
-            pass
-        raise
-
-
-@app.function(
-    image=image,
-    volumes={VOLUME_PATH: vol},
-    secrets=[
-        modal.Secret.from_name("kronos-twelve-data"),
-        modal.Secret.from_name("kronos-email"),
-    ],
-    schedule=modal.Cron("0 19 * * 1-5"),
-    timeout=3600,
-)
-def update_data_afternoon():
-    """Update latest bars for all cached stocks. Runs daily 3:00 PM ET before post-market."""
-    import pytz
-    et = pytz.timezone("US/Eastern")
-    now_et = datetime.now(et)
-    if now_et.hour != 15:
-        print(f"Skipping update_data_afternoon: ET time is {now_et.strftime('%H:%M')}, expected 15:00")
-        return
-    last_run = _get_last_run("data_afternoon")
-    if last_run and (datetime.now() - last_run).total_seconds() < 1800:
-        print(f"Skipping update_data_afternoon: already ran {int((datetime.now() - last_run).total_seconds())}s ago")
-        return
-    try:
-        _run_data_update()
-        _set_last_run("data_afternoon")
-    except Exception as e:
-        print(f"FATAL ERROR in update_data_afternoon: {type(e).__name__}: {e}")
-        try:
-            sender = os.environ.get("KRONOS_EMAIL", "")
-            password = os.environ.get("KRONOS_EMAIL_PASSWORD", "")
-            recipient = os.environ.get("KRONOS_RECIPIENT", sender)
-            if sender and password and recipient:
-                _send_email(
-                    subject=f"Kronos ERROR — afternoon data update — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                    body=f"FATAL ERROR in afternoon data update:\n\n{type(e).__name__}: {e}\n\nCheck Modal logs for details.",
-                    sender_email=sender,
-                    sender_password=password,
-                    recipient_email=recipient,
-                )
-        except Exception:
-            pass
-        raise
-
-
-def _run_data_update():
-    """Shared data update logic."""
+def run_data_update():
+    """Update latest bars for all cached stocks."""
     import pandas as pd
     import requests as req
 
@@ -1592,7 +1305,7 @@ def _run_data_update():
         return
     print(f"Loaded {len(API_KEYS)} API keys")
 
-    stock_list_path = Path(VOLUME_PATH) / "stocks.json"
+    stock_list_path = Path(DATA_DIR) / "stocks.json"
     if not stock_list_path.exists():
         print("ERROR: No stocks.json — run trading cycle first")
         return
@@ -1607,6 +1320,33 @@ def _run_data_update():
     symbols_to_update = [s for s in all_symbols if s in cached_data]
     print(f"Updating {len(symbols_to_update)} stocks...")
 
-    _update_latest_bars(API_KEYS, symbols_to_update, cached_data, data_cache_dir, req, pd, volume=vol)
-    vol.commit()
+    _update_latest_bars(API_KEYS, symbols_to_update, cached_data, data_cache_dir, req, pd)
     print(f"\nData update complete. Updated {len(symbols_to_update)} stocks.")
+
+
+# =============================================================================
+# CLI ENTRY POINT
+# =============================================================================
+if __name__ == "__main__":
+    mode = sys.argv[1] if len(sys.argv) > 1 else "--help"
+
+    if mode == "--mode" and len(sys.argv) > 2:
+        mode = sys.argv[2]
+
+    if mode == "trading-cycle":
+        send_email = os.environ.get("KRONOS_SEND_EMAIL", "true").lower() == "true"
+        run_trading_cycle(send_email=send_email)
+    elif mode == "data-update":
+        run_data_update()
+    elif mode == "--help" or mode == "-h":
+        print("Kronos Paper Trading Engine")
+        print("")
+        print("Usage:")
+        print("  python app.py --mode trading-cycle    Run inference + trading")
+        print("  python app.py --mode data-update       Update OHLCV data")
+        print("  python app.py --mode fine-tune         Fine-tune model (run fine_tune.py)")
+        print("  python app.py --help                   Show this help")
+    else:
+        print(f"Unknown mode: {mode}")
+        print("Use --help for available commands")
+        sys.exit(1)

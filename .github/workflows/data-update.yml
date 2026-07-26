@@ -1,0 +1,36 @@
+name: Data Update
+on:
+  cron:
+    - cron: '0 12 * * 1-5'   # 8:00 AM ET before pre-market
+    - cron: '0 19 * * 1-5'   # 3:00 PM ET before post-market
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run data update
+        run: python app.py --mode data-update
+        env:
+          TWELVE_DATA_KEYS: ${{ secrets.TWELVE_DATA_KEYS }}
+
+      - name: Commit data changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Data update"
+          file_pattern: 'data/'
+          commit_user_name: "Kronos Bot"
+          commit_user_email: "kronos-bot@users.noreply.github.com"
