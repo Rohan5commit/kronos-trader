@@ -143,8 +143,7 @@ def _run_cycle_body(send_email):
             for sym, df in new_data.items():
                 df.to_parquet(data_cache_dir / f"{sym}.parquet", index=False)
                 cached_data[sym] = df
-    # Adapter loaded (if available)
-            print(f"  Committed {len(new_data)} stocks to volume")
+            print(f"  Fetched {len(new_data)} new stocks")
 
     valid_data = {
         s: df for s, df in cached_data.items()
@@ -915,7 +914,7 @@ def _load_cached_data(cache_dir, pd_mod):
     return data
 
 
-def _update_latest_bars(api_keys, symbols, cached_data, cache_dir, requests_mod, pd_mod, num_bars=10, volume=None):
+def _update_latest_bars(api_keys, symbols, cached_data, cache_dir, requests_mod, pd_mod, num_bars=10):
     """Fetch only latest bars and update cache — rate-limited to respect API limits."""
     import threading
     import time as _time
@@ -969,8 +968,6 @@ def _update_latest_bars(api_keys, symbols, cached_data, cache_dir, requests_mod,
             updated[0] += 1
             if updated[0] % 200 == 0:
                 print(f"  Updated {updated[0]}/{len(symbols)} stocks...")
-                if volume:
-                    volume.commit()
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
     with ThreadPoolExecutor(max_workers=8) as executor:

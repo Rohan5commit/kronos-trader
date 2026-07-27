@@ -5,7 +5,6 @@ Fine-tunes a small adapter on top of the frozen Kronos model using recent predic
 import os
 import sys
 import json
-import sqlite3
 import numpy as np
 import pandas as pd
 import torch
@@ -16,7 +15,6 @@ from datetime import datetime, timedelta
 DATA_DIR = "./data"
 OHLCV_DIR = f"{DATA_DIR}/ohlcv"
 MODEL_DIR = f"{DATA_DIR}/model"
-DB_PATH = f"{DATA_DIR}/trades.db"
 ADAPTER_DIR = f"{MODEL_DIR}/adapter"
 
 LOOKBACK = 400
@@ -28,14 +26,14 @@ LR = 1e-4
 
 
 class LoRAAdapter(nn.Module):
-    """Low-rank adapter for Kronos. Injects small trainable matrices into attention layers."""
-    def __init__(self, base_dim=256, rank=8):
+    """Low-rank adapter for Kronos. Modifies prediction close prices."""
+    def __init__(self, input_dim=10, rank=8):
         super().__init__()
         self.rank = rank
-        self.lora_A = nn.Linear(base_dim, rank, bias=False)
-        self.lora_B = nn.Linear(rank, base_dim, bias=False)
+        self.lora_A = nn.Linear(input_dim, rank, bias=False)
+        self.lora_B = nn.Linear(rank, input_dim, bias=False)
         nn.init.zeros_(self.lora_B.weight)
-        self.scaling = rank / base_dim
+        self.scaling = rank / input_dim
 
     def forward(self, x):
         return x + self.lora_B(self.lora_A(x)) * self.scaling
@@ -54,7 +52,7 @@ def load_training_data():
     for parquet_file in cache_dir.glob("*.parquet"):
         try:
             df = pd.read_parquet(parquet_file)
-            if len(df) < LOOKBACK + PRED_LEN + 10:
+            if len(df) < LOOKBACK * 2 + PRED_LEN + 10:
                 continue
             # Check if data is recent enough
             latest = df["timestamp"].max()
@@ -137,8 +135,9 @@ def main():
 
     # Load Kronos model
     print("Loading Kronos model...")
-    if "/tmp/kronos_repo" not in sys.path:
-        sys.path.insert(0, "/tmp/kronos_repo")
+    kronos_repo = os.environ.get("KRONOS_REPO", "/tmp/kronos_repo")
+    if kronos_repo not in sys.path:
+        sys.path.insert(0, kronos_repo)
     from model import Kronos, KronosTokenizer, KronosPredictor
 
     model_cache = Path(MODEL_DIR)
@@ -164,7 +163,7 @@ def main():
     predictor = KronosPredictor(model, tokenizer, device=str(device), max_context=512)
 
     # Create LoRA adapter
-    adapter = LoRAAdapter(base_dim=256, rank=8).to(device)
+    adapter = LoRAAdapter(input_dim=PRED_LEN, rank=8).to(device)
     optimizer = torch.optim.Adam(adapter.parameters(), lr=LR)
 
     # Load training data
@@ -185,7 +184,7 @@ def main():
         "rank": adapter.rank,
         "lora_A": adapter.lora_A.state_dict(),
         "lora_B": adapter.lora_B.state_dict(),
-        "base_dim": 256,
+        "input_dim": PRED_LEN,
     }, adapter_path)
     print(f"\nAdapter saved to {adapter_path}")
 

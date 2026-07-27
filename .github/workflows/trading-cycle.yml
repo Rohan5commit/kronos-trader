@@ -1,6 +1,6 @@
 name: Trading Cycle
 on:
-  cron:
+  schedule:
     - cron: '30 13 * * 1-5'  # 9:30 AM ET pre-market
     - cron: '45 19 * * 1-5'  # 3:45 PM ET post-market
   workflow_dispatch:

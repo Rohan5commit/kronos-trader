@@ -1,6 +1,6 @@
 name: Fine-Tune Model
 on:
-  cron:
+  schedule:
     - cron: '0 2 * * 0'  # Sunday 2 AM UTC
   workflow_dispatch:
 
