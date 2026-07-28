@@ -848,15 +848,34 @@ def _fetch_stock_universe(api_keys, requests_mod):
 
 
 def _fetch_ohlcv_batch(api_keys, symbols, requests_mod, pd_mod, outputsize=600):
-    """Fetch OHLCV data with key rotation."""
+    """Fetch OHLCV data with key rotation, health check, and detailed error logging."""
     import threading
     results = {}
     key_idx = [0]
     call_times = {k: [] for k in api_keys}
     lock = threading.Lock()
 
-    def get_key():
-        while True:
+    # --- API health check: verify at least one key works before processing1000 stocks ---
+    test_key = api_keys[0]
+    try:
+        test_resp = requests_mod.get(
+            "https://api.twelvedata.com/time_series",
+            params={"symbol": "AAPL", "interval": "1day", "outputsize": 5, "apikey": test_key},
+            timeout=15,
+        )
+        test_data = test_resp.json()
+        if "values" not in test_data:
+            print(f"  CRITICAL: API health check failed: {test_data.get('code', '?')} {test_data.get('message', 'unknown')}")
+            print(f"  Check your Twelve Data API keys and subscription status.")
+            return {}
+        print(f"  API health check passed (HTTP {test_resp.status_code})")
+    except Exception as e:
+        print(f"  CRITICAL: API health check exception: {type(e).__name__}: {e}")
+        return {}
+
+    def get_key(timeout=120):
+        start = time.time()
+        while time.time() - start < timeout:
             with lock:
                 key = api_keys[key_idx[0] % len(api_keys)]
                 key_idx[0] += 1
@@ -867,36 +886,42 @@ def _fetch_ohlcv_batch(api_keys, symbols, requests_mod, pd_mod, outputsize=600):
                     return key
                 sleep_time = 60 - (now - call_times[key][0]) + 0.1
             time.sleep(max(sleep_time, 0.5))
+        return None
 
     failed = [0]
+    short_data = [0]
     def fetch_one(sym):
         key = get_key()
+        if key is None:
+            with lock:
+                failed[0] += 1
+            return sym, None, "rate_limited"
         try:
             resp = requests_mod.get(
                 "https://api.twelvedata.com/time_series",
                 params={"symbol": sym, "interval": "1day", "outputsize": outputsize, "apikey": key},
                 timeout=30,
             )
+            if resp.status_code != 200:
+                with lock:
+                    failed[0] += 1
+                return sym, None, f"http_{resp.status_code}"
             data = resp.json()
             if "values" not in data:
                 with lock:
                     failed[0] += 1
-                    if failed[0] <= 5:
-                        print(f"  API error for {sym}: {data.get('code', '?')} {data.get('message', 'no values')}")
-                return sym, None
+                return sym, None, data.get("message", "no values")
             df = pd_mod.DataFrame(data["values"])
             df = df.rename(columns={"datetime": "timestamp"})
             df["timestamp"] = pd_mod.to_datetime(df["timestamp"])
             for col in ["open", "high", "low", "close", "volume"]:
                 df[col] = pd_mod.to_numeric(df[col], errors="coerce")
             df = df.sort_values("timestamp").reset_index(drop=True)
-            return sym, df[["timestamp", "open", "high", "low", "close", "volume"]]
+            return sym, df[["timestamp", "open", "high", "low", "close", "volume"]], None
         except Exception as e:
             with lock:
                 failed[0] += 1
-                if failed[0] <= 5:
-                    print(f"  Fetch exception for {sym}: {type(e).__name__}: {e}")
-            return sym, None
+            return sym, None, f"{type(e).__name__}: {e}"
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
     with ThreadPoolExecutor(max_workers=8) as executor:
@@ -904,13 +929,16 @@ def _fetch_ohlcv_batch(api_keys, symbols, requests_mod, pd_mod, outputsize=600):
         done = 0
         for future in as_completed(futures):
             done += 1
-            sym, df = future.result()
-            if df is not None and len(df) >= 50:
+            sym, df, err = future.result()
+            if df is not None and len(df) >= 20:
                 results[sym] = df
+            elif df is not None:
+                with lock:
+                    short_data[0] += 1
             if done % 100 == 0:
-                print(f"  Fetched {done}/{len(symbols)} stocks ({failed[0]} failed)...")
-    if failed[0] > 0:
-        print(f"  Total failures: {failed[0]}/{len(symbols)}")
+                print(f"  Fetched {done}/{len(symbols)} stocks ({failed[0]} errors, {short_data[0]} too short)...")
+
+    print(f"  Batch result: {len(results)} ok, {failed[0]} API errors, {short_data[0]} had <20 bars")
     return results
 
 
