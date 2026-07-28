@@ -868,6 +868,7 @@ def _fetch_ohlcv_batch(api_keys, symbols, requests_mod, pd_mod, outputsize=600):
                 sleep_time = 60 - (now - call_times[key][0]) + 0.1
             time.sleep(max(sleep_time, 0.5))
 
+    failed = [0]
     def fetch_one(sym):
         key = get_key()
         try:
@@ -878,6 +879,10 @@ def _fetch_ohlcv_batch(api_keys, symbols, requests_mod, pd_mod, outputsize=600):
             )
             data = resp.json()
             if "values" not in data:
+                with lock:
+                    failed[0] += 1
+                    if failed[0] <= 5:
+                        print(f"  API error for {sym}: {data.get('code', '?')} {data.get('message', 'no values')}")
                 return sym, None
             df = pd_mod.DataFrame(data["values"])
             df = df.rename(columns={"datetime": "timestamp"})
@@ -886,7 +891,11 @@ def _fetch_ohlcv_batch(api_keys, symbols, requests_mod, pd_mod, outputsize=600):
                 df[col] = pd_mod.to_numeric(df[col], errors="coerce")
             df = df.sort_values("timestamp").reset_index(drop=True)
             return sym, df[["timestamp", "open", "high", "low", "close", "volume"]]
-        except Exception:
+        except Exception as e:
+            with lock:
+                failed[0] += 1
+                if failed[0] <= 5:
+                    print(f"  Fetch exception for {sym}: {type(e).__name__}: {e}")
             return sym, None
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -899,7 +908,9 @@ def _fetch_ohlcv_batch(api_keys, symbols, requests_mod, pd_mod, outputsize=600):
             if df is not None and len(df) >= 50:
                 results[sym] = df
             if done % 100 == 0:
-                print(f"  Fetched {done}/{len(symbols)} stocks...")
+                print(f"  Fetched {done}/{len(symbols)} stocks ({failed[0]} failed)...")
+    if failed[0] > 0:
+        print(f"  Total failures: {failed[0]}/{len(symbols)}")
     return results
 
 
