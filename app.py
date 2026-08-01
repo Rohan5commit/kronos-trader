@@ -189,128 +189,139 @@ def _run_cycle_body(send_email):
         # Adapter loaded (if available)
 
     # =========================================================================
-    # 5. RUN ENSEMBLE PREDICTIONS (multiple lookback windows + decay weighting)
+    # 5. RUN ENSEMBLE PREDICTIONS (batch inference via predict_batch)
     # =========================================================================
     print(f"\nRunning ensemble predictions on {len(valid_data)} stocks...")
     predictor = KronosPredictor(model, tokenizer, device=str(device), max_context=512)
 
-    ENSEMBLE_LOOKBACKS = [200, 320, 360, 400]  # Fallback: stocks with 210+ bars get at least one prediction
+    ENSEMBLE_LOOKBACKS = [200, 320, 360, 400]
     PRED_LEN = 10
-    DECAY_LAMBDA = 0.3  # Exponential decay for near vs far bar weighting
+    DECAY_LAMBDA = 0.3
+    BATCH_SIZE = 32  # stocks per predict_batch call
 
-    # Precompute decay weights: weight nearer predictions higher
     decay_weights = np.array([np.exp(-DECAY_LAMBDA * i) for i in range(PRED_LEN)])
-    decay_weights = decay_weights / decay_weights.sum()  # normalize to sum=1
+    decay_weights = decay_weights / decay_weights.sum()
 
-    predictions = {}
-    symbols_list = list(valid_data.keys())
-    batch_size = 32
+    # Pre-filter: compute current_close and realized_vol for all stocks upfront
+    stock_meta = {}
+    for sym, df in valid_data.items():
+        if len(df) < 110:
+            continue
+        current_close = float(df.iloc[-1]["close"])
+        if current_close < 1.0:
+            continue
+        if len(df) >= 25:
+            closes_25 = df["close"].values[-25:]
+            log_returns = np.log(closes_25[1:] / closes_25[:-1])
+            realized_vol = float(np.std(log_returns) * np.sqrt(252))
+        else:
+            realized_vol = 0.30
+        stock_meta[sym] = {"current_close": current_close, "realized_vol": realized_vol}
 
-    for i in range(0, len(symbols_list), batch_size):
-        batch = symbols_list[i:i+batch_size]
-        for sym in batch:
-            try:
+    print(f"  Pre-filtered to {len(stock_meta)} tradable stocks")
+
+    # Accumulate ensemble results per stock
+    ensemble_accum = {sym: {"returns": [], "confidences": [], "pred_stds": []} for sym in stock_meta}
+
+    # For each lookback, batch predict all qualifying stocks
+    for lookback in ENSEMBLE_LOOKBACKS:
+        qualifying = [sym for sym in stock_meta
+                      if len(valid_data[sym]) >= lookback + 10
+                      and not valid_data[sym][["open", "high", "low", "close", "volume"]].isnull().values.any()]
+
+        if not qualifying:
+            continue
+
+        print(f"  Lookback {lookback}: {len(qualifying)} stocks eligible")
+
+        for batch_start in range(0, len(qualifying), BATCH_SIZE):
+            batch_syms = qualifying[batch_start:batch_start + BATCH_SIZE]
+
+            df_list = []
+            x_timestamp_list = []
+            y_timestamp_list = []
+
+            for sym in batch_syms:
                 df = valid_data[sym]
-                if len(df) < 110:  # Minimum viable: need at least 100 bars + buffer
-                    continue
+                x_hist = df.iloc[:lookback][["open", "high", "low", "close", "volume"]].copy()
+                x_hist["amount"] = 0.0
+                x_timestamp = pd.Series(df.iloc[:lookback]["timestamp"])
 
-                # Skip penny stocks BEFORE expensive GPU inference
-                current_close = float(df.iloc[-1]["close"])
-                if current_close < 1.0:
-                    continue
+                last_ts = x_timestamp.iloc[-1]
+                y_timestamp = pd.Series(pd.date_range(
+                    start=last_ts + pd.Timedelta(days=1),
+                    periods=PRED_LEN,
+                    freq="B",
+                ))
 
-                # Compute realized volatility (20-day) for volatility scaling
-                if len(df) >= 25:
-                    closes_25 = df["close"].values[-25:]
-                    log_returns = np.log(closes_25[1:] / closes_25[:-1])
-                    realized_vol = float(np.std(log_returns) * np.sqrt(252))
-                else:
-                    realized_vol = 0.30  # default moderate vol
+                df_list.append(x_hist)
+                x_timestamp_list.append(x_timestamp)
+                y_timestamp_list.append(y_timestamp)
 
-                # Ensemble: average predictions across available lookback windows
-                ensemble_returns = []
-                ensemble_confidences = []
-                ensemble_pred_stds = []
+            try:
+                pred_dfs = predictor.predict_batch(
+                    df_list=df_list,
+                    x_timestamp_list=x_timestamp_list,
+                    y_timestamp_list=y_timestamp_list,
+                    pred_len=PRED_LEN,
+                    T=0.8,
+                    top_p=0.9,
+                    sample_count=1,
+                    verbose=False,
+                )
 
-                for lookback in ENSEMBLE_LOOKBACKS:
-                    if len(df) < lookback + 10:
+                for idx, sym in enumerate(batch_syms):
+                    try:
+                        pred_df = pred_dfs[idx]
+                        current_close = stock_meta[sym]["current_close"]
+
+                        pred_closes = pred_df["close"].values
+                        bar_returns = (pred_closes - current_close) / current_close
+                        weighted_return = float(np.sum(bar_returns * decay_weights))
+
+                        pred_std = float(pred_df["close"].std())
+                        pred_range = float(pred_df["close"].max() - pred_df["close"].min())
+                        trajectory_stability = pred_range / (pred_std + 1e-8)
+                        confidence = abs(weighted_return) * min(trajectory_stability, 10.0)
+
+                        ensemble_accum[sym]["returns"].append(weighted_return)
+                        ensemble_accum[sym]["confidences"].append(confidence)
+                        ensemble_accum[sym]["pred_stds"].append(pred_std / current_close)
+                    except Exception as e:
                         continue
 
-                    x_hist = df.iloc[:lookback][["open", "high", "low", "close", "volume"]].copy()
-                    x_hist["amount"] = 0.0
-                    x_timestamp = pd.Series(df.iloc[:lookback]["timestamp"])
-
-                    last_ts = x_timestamp.iloc[-1]
-                    y_timestamp = pd.Series(pd.date_range(
-                        start=last_ts + pd.Timedelta(days=1),
-                        periods=PRED_LEN,
-                        freq="B",
-                    ))
-
-                    if x_hist.isnull().values.any():
-                        continue
-
-                    pred_df = predictor.predict(
-                        df=x_hist,
-                        x_timestamp=x_timestamp,
-                        y_timestamp=y_timestamp,
-                        pred_len=PRED_LEN,
-                        T=0.8,
-                        top_p=0.9,
-                        sample_count=1,
-                    )
-
-                    # Decay-weighted return: weight near-bar predictions higher
-                    pred_closes = pred_df["close"].values
-                    bar_returns = (pred_closes - current_close) / current_close
-                    weighted_return = float(np.sum(bar_returns * decay_weights))
-
-                    # Store raw (uncapped) return — used for ranking
-                    ensemble_returns.append(weighted_return)
-
-                    pred_std = float(pred_df["close"].std())
-                    pred_range = float(pred_df["close"].max() - pred_df["close"].min())
-                    trajectory_stability = pred_range / (pred_std + 1e-8)
-                    confidence = abs(weighted_return) * min(trajectory_stability, 10.0)
-
-                    ensemble_confidences.append(confidence)
-                    ensemble_pred_stds.append(pred_std / current_close)
-
-                if not ensemble_returns:
-                    continue
-
-                # Average across ensemble members
-                raw_return = float(np.mean(ensemble_returns))
-                confidence = float(np.mean(ensemble_confidences))
-                pred_std_pct = float(np.mean(ensemble_pred_stds))
-
-                # Skip if prediction is too noisy
-                if pred_std_pct > 0.15:
-                    continue
-
-                # Cap for position sizing at ±50% (not ±20% — preserves signal differentiation)
-                predicted_return = max(-0.50, min(0.50, raw_return))
-                predicted_close = current_close * (1 + predicted_return)
-
-                predictions[sym] = {
-                    "current_close": current_close,
-                    "predicted_close": predicted_close,
-                    "predicted_return": predicted_return,
-                    "raw_return": raw_return,
-                    "confidence": confidence,
-                    "pred_std_pct": pred_std_pct,
-                    "realized_vol": realized_vol,
-                }
-                if len(predictions) <= 5:
-                    print(f"  ✓ {sym}: raw={raw_return:+.2%}, capped={predicted_return:+.2%}, conf={confidence:.3f}, vol={realized_vol:.2%}")
             except Exception as e:
-                if len(predictions) < 3:
-                    print(f"  ✗ {sym}: {type(e).__name__}: {e}")
+                print(f"  ✗ Batch error (lookback={lookback}, batch={batch_start}): {type(e).__name__}: {e}")
                 continue
 
-        predicted_count = len(predictions)
-        if predicted_count > 0 and predicted_count % 100 < batch_size:
-            print(f"  Predicted {predicted_count}/{len(symbols_list)} stocks")
+    # Finalize: average ensemble members, apply filters, build predictions dict
+    predictions = {}
+    for sym, accum in ensemble_accum.items():
+        if not accum["returns"]:
+            continue
+
+        raw_return = float(np.mean(accum["returns"]))
+        confidence = float(np.mean(accum["confidences"]))
+        pred_std_pct = float(np.mean(accum["pred_stds"]))
+
+        if pred_std_pct > 0.15:
+            continue
+
+        current_close = stock_meta[sym]["current_close"]
+        predicted_return = max(-0.50, min(0.50, raw_return))
+        predicted_close = current_close * (1 + predicted_return)
+
+        predictions[sym] = {
+            "current_close": current_close,
+            "predicted_close": predicted_close,
+            "predicted_return": predicted_return,
+            "raw_return": raw_return,
+            "confidence": confidence,
+            "pred_std_pct": pred_std_pct,
+            "realized_vol": stock_meta[sym]["realized_vol"],
+        }
+        if len(predictions) <= 5:
+            print(f"  ✓ {sym}: raw={raw_return:+.2%}, capped={predicted_return:+.2%}, conf={confidence:.3f}, vol={stock_meta[sym]['realized_vol']:.2%}")
 
     print(f"\nCompleted predictions for {len(predictions)} stocks")
 
