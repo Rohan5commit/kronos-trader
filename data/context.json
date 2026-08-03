@@ -1,0 +1,71 @@
+{
+  "run_timestamp": "2026-08-03T19:49:22.968658",
+  "portfolio": {
+    "cash": -89894.42,
+    "total_value": 116606.82,
+    "cumulative_pnl": 16606.820000000007,
+    "num_positions": 51
+  },
+  "actions_this_run": {
+    "buys": [],
+    "sells": [],
+    "total_buys": 0,
+    "total_sells": 0
+  },
+  "reasoning": {
+    "top_predictions": [
+      {
+        "symbol": "ANTA",
+        "return": 0.5,
+        "confidence": 6.3362
+      },
+      {
+        "symbol": "ATGL",
+        "return": 0.5,
+        "confidence": 5.9954
+      },
+      {
+        "symbol": "CNVCF",
+        "return": 0.5,
+        "confidence": 5.3055
+      },
+      {
+        "symbol": "BNC",
+        "return": 0.5,
+        "confidence": 5.0901
+      },
+      {
+        "symbol": "AGNT",
+        "return": 0.5,
+        "confidence": 4.7291
+      },
+      {
+        "symbol": "ANPA",
+        "return": 0.5,
+        "confidence": 4.4752
+      },
+      {
+        "symbol": "AMST",
+        "return": 0.5,
+        "confidence": 4.4547
+      },
+      {
+        "symbol": "CBRG",
+        "return": 0.5,
+        "confidence": 4.1868
+      },
+      {
+        "symbol": "BCAR",
+        "return": 0.5,
+        "confidence": 4.1592
+      },
+      {
+        "symbol": "ANGI",
+        "return": 0.5,
+        "confidence": 3.8181
+      }
+    ],
+    "sell_reasons": []
+  },
+  "previous_context": null
+}
