@@ -325,6 +325,16 @@ def _run_cycle_body(send_email):
 
     print(f"\nCompleted predictions for {len(predictions)} stocks")
 
+    # Ensure prediction_accuracy table exists before storing
+    with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS prediction_accuracy (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT,
+                symbol TEXT, predicted_return REAL, actual_return REAL,
+                correct INTEGER, prediction_close REAL
+            )
+        """)
+
     # Store predictions for accuracy tracking + evaluate previous day's predictions
     _store_predictions(predictions)
     _evaluate_previous_predictions()
