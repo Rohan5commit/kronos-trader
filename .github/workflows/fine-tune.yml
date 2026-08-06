@@ -33,42 +33,7 @@ jobs:
         run: git clone https://github.com/shiyu-coder/Kronos.git /tmp/kronos_repo
 
       - name: Fetch OHLCV data for training
-        run: |
-          python -c "
-          import json, os, sys
-          sys.path.insert(0, '.')
-          from app import _fetch_ohlcv_batch, _fetch_stock_universe
-          import requests, pandas as pd
-          from pathlib import Path
-
-          keys = json.loads(os.environ['TWELVE_DATA_KEYS'])
-          stock_list_path = Path('data/stocks.json')
-          if stock_list_path.exists():
-              with open(stock_list_path) as f:
-                  symbols = json.load(f)
-          else:
-              symbols = _fetch_stock_universe(keys, requests)
-              stock_list_path.parent.mkdir(parents=True, exist_ok=True)
-              with open(stock_list_path, 'w') as f:
-                  json.dump(symbols, f)
-
-          cache_dir = Path('data/ohlcv')
-          cache_dir.mkdir(parents=True, exist_ok=True)
-
-          to_fetch = [s for s in symbols if not (cache_dir / f'{s}.parquet').exists()]
-          print(f'Need to fetch {len(to_fetch)} stocks (have {len(symbols) - len(to_fetch)} cached)')
-
-          fetched = 0
-          for batch_start in range(0, len(to_fetch), 200):
-              batch = to_fetch[batch_start:batch_start+200]
-              print(f'  Fetching batch {batch_start//200+1}: {len(batch)} stocks...')
-              data = _fetch_ohlcv_batch(keys, batch, requests, pd, outputsize=520)
-              for sym, df in data.items():
-                  df.to_parquet(cache_dir / f'{sym}.parquet', index=False)
-              fetched += len(data)
-              print(f'  Got {len(data)} stocks')
-
-          print(f'Total: {fetched} new + {len(list(cache_dir.glob(\"*.parquet\")))} existing parquet files')
+        run: python scripts/fetch_training_data.py
         env:
           TWELVE_DATA_KEYS: ${{ secrets.TWELVE_DATA_KEYS }}
 
