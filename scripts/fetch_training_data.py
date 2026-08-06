@@ -39,7 +39,7 @@ def main():
     for batch_start in range(0, len(to_fetch), 200):
         batch = to_fetch[batch_start : batch_start + 200]
         print(f"  Fetching batch {batch_start // 200 + 1}: {len(batch)} stocks...")
-        data = _fetch_ohlcv_batch(keys, batch, requests, pd, outputsize=520)
+        data = _fetch_ohlcv_batch(keys, batch, requests, pd, outputsize=900)
         for sym, df in data.items():
             df.to_parquet(OHLCV_DIR / f"{sym}.parquet", index=False)
         fetched += len(data)
