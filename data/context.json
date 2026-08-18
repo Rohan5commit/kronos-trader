@@ -1,10 +1,10 @@
 {
-  "run_timestamp": "2026-08-18T16:51:05.246725",
+  "run_timestamp": "2026-08-18T23:39:41.598187",
   "portfolio": {
-    "cash": -99766.08,
-    "total_value": 124797.8,
-    "cumulative_pnl": 24797.800000000003,
-    "num_positions": 49
+    "cash": -107244.22,
+    "total_value": 123139.36,
+    "cumulative_pnl": 23139.36,
+    "num_positions": 50
   },
   "actions_this_run": {
     "buys": [],
@@ -15,65 +15,65 @@
   "reasoning": {
     "top_predictions": [
       {
-        "symbol": "ATGL",
-        "return": 0.5,
-        "confidence": 7.2829
-      },
-      {
         "symbol": "BSGM",
         "return": 0.5,
-        "confidence": 6.1923
-      },
-      {
-        "symbol": "ANGI",
-        "return": 0.5,
-        "confidence": 5.7766
-      },
-      {
-        "symbol": "CDIO",
-        "return": 0.5,
-        "confidence": 5.6091
+        "confidence": 6.1405
       },
       {
         "symbol": "BNC",
         "return": 0.5,
-        "confidence": 4.837
-      },
-      {
-        "symbol": "BTCS",
-        "return": 0.5,
-        "confidence": 4.6858
-      },
-      {
-        "symbol": "ATXG",
-        "return": 0.5,
-        "confidence": 4.4375
-      },
-      {
-        "symbol": "BGLC",
-        "return": 0.5,
-        "confidence": 4.4171
-      },
-      {
-        "symbol": "BXBL",
-        "return": 0.5,
-        "confidence": 4.2835
+        "confidence": 4.7133
       },
       {
         "symbol": "ANTA",
         "return": 0.5,
-        "confidence": 4.2751
+        "confidence": 4.6949
+      },
+      {
+        "symbol": "BXBL",
+        "return": 0.5,
+        "confidence": 4.6752
+      },
+      {
+        "symbol": "ALZN",
+        "return": 0.5,
+        "confidence": 4.5641
+      },
+      {
+        "symbol": "CBRG",
+        "return": 0.5,
+        "confidence": 4.4149
+      },
+      {
+        "symbol": "ANPA",
+        "return": 0.5,
+        "confidence": 4.3937
+      },
+      {
+        "symbol": "BTCS",
+        "return": 0.5,
+        "confidence": 4.3839
+      },
+      {
+        "symbol": "BKYI",
+        "return": 0.5,
+        "confidence": 4.2935
+      },
+      {
+        "symbol": "BGLC",
+        "return": 0.5,
+        "confidence": 4.2869
       }
     ],
     "sell_reasons": []
   },
   "previous_context": {
-    "run_timestamp": "2026-08-17T23:14:29.750753",
+    "run_timestamp": "2026-08-18T16:51:05.246725",
     "portfolio": {
-      "cash": -107119.26,
-      "total_value": 123095.53,
-      "cumulative_pnl": 23095.53,
-      "num_positions": 51
+      "cash": -99766.08,
+      "total_value": 124797.8,
+      "cumulative_pnl": 24797.800000000003,
+      "num_positions": 49
     },
     "actions_this_run": {
       "buys": [],
@@ -86,62 +86,62 @@
         {
           "symbol": "ATGL",
           "return": 0.5,
-          "confidence": 7.3351
+          "confidence": 7.2829
+        },
+        {
+          "symbol": "BSGM",
+          "return": 0.5,
+          "confidence": 6.1923
+        },
+        {
+          "symbol": "ANGI",
+          "return": 0.5,
+          "confidence": 5.7766
         },
         {
           "symbol": "CDIO",
           "return": 0.5,
-          "confidence": 5.0224
-        },
-        {
-          "symbol": "BBLGW",
-          "return": 0.5,
-          "confidence": 4.9838
-        },
-        {
-          "symbol": "BHSE",
-          "return": 0.5,
-          "confidence": 4.8677
-        },
-        {
-          "symbol": "BXBL",
-          "return": 0.5,
-          "confidence": 4.5578
-        },
-        {
-          "symbol": "BKYI",
-          "return": 0.5,
-          "confidence": 4.4083
+          "confidence": 5.6091
         },
         {
           "symbol": "BNC",
           "return": 0.5,
-          "confidence": 4.2371
+          "confidence": 4.837
+        },
+        {
+          "symbol": "BTCS",
+          "return": 0.5,
+          "confidence": 4.6858
+        },
+        {
+          "symbol": "ATXG",
+          "return": 0.5,
+          "confidence": 4.4375
+        },
+        {
+          "symbol": "BGLC",
+          "return": 0.5,
+          "confidence": 4.4171
+        },
+        {
+          "symbol": "BXBL",
+          "return": 0.5,
+          "confidence": 4.2835
         },
         {
           "symbol": "ANTA",
           "return": 0.5,
-          "confidence": 4.2239
-        },
-        {
-          "symbol": "ANPA",
-          "return": 0.5,
-          "confidence": 4.1015
-        },
-        {
-          "symbol": "BENF",
-          "return": 0.5,
-          "confidence": 3.875
+          "confidence": 4.2751
         }
       ],
       "sell_reasons": []
     },
     "previous_context": {
-      "run_timestamp": "2026-08-17T17:47:54.823380",
+      "run_timestamp": "2026-08-17T23:14:29.750753",
       "portfolio": {
-        "cash": -100499.52,
-        "total_value": 123567.25,
-        "cumulative_pnl": 23567.25,
+        "cash": -107119.26,
+        "total_value": 123095.53,
+        "cumulative_pnl": 23095.53,
         "num_positions": 51
       },
       "actions_this_run": {
@@ -155,63 +155,63 @@
           {
             "symbol": "ATGL",
             "return": 0.5,
-            "confidence": 6.6354
-          },
-          {
-            "symbol": "ALDX",
-            "return": 0.5,
-            "confidence": 6.057
+            "confidence": 7.3351
           },
           {
             "symbol": "CDIO",
             "return": 0.5,
-            "confidence": 5.6512
-          },
-          {
-            "symbol": "BGLC",
-            "return": 0.5,
-            "confidence": 4.7352
-          },
-          {
-            "symbol": "BKYI",
-            "return": 0.5,
-            "confidence": 4.4255
+            "confidence": 5.0224
           },
           {
             "symbol": "BBLGW",
             "return": 0.5,
-            "confidence": 4.3317
-          },
-          {
-            "symbol": "BNC",
-            "return": 0.5,
-            "confidence": 4.1834
-          },
-          {
-            "symbol": "ANPA",
-            "return": 0.5,
-            "confidence": 4.1681
+            "confidence": 4.9838
           },
           {
             "symbol": "BHSE",
             "return": 0.5,
-            "confidence": 3.9665
+            "confidence": 4.8677
           },
           {
-            "symbol": "ATXG",
+            "symbol": "BXBL",
             "return": 0.5,
-            "confidence": 3.9531
+            "confidence": 4.5578
+          },
+          {
+            "symbol": "BKYI",
+            "return": 0.5,
+            "confidence": 4.4083
+          },
+          {
+            "symbol": "BNC",
+            "return": 0.5,
+            "confidence": 4.2371
+          },
+          {
+            "symbol": "ANTA",
+            "return": 0.5,
+            "confidence": 4.2239
+          },
+          {
+            "symbol": "ANPA",
+            "return": 0.5,
+            "confidence": 4.1015
+          },
+          {
+            "symbol": "BENF",
+            "return": 0.5,
+            "confidence": 3.875
           }
         ],
         "sell_reasons": []
       },
       "previous_context": {
-        "run_timestamp": "2026-08-14T23:29:45.841833",
+        "run_timestamp": "2026-08-17T17:47:54.823380",
         "portfolio": {
-          "cash": -108026.32,
-          "total_value": 125893.07,
-          "cumulative_pnl": 25893.070000000007,
-          "num_positions": 52
+          "cash": -100499.52,
+          "total_value": 123567.25,
+          "cumulative_pnl": 23567.25,
+          "num_positions": 51
         },
         "actions_this_run": {
           "buys": [],
@@ -222,65 +222,65 @@
         "reasoning": {
           "top_predictions": [
             {
+              "symbol": "ATGL",
+              "return": 0.5,
+              "confidence": 6.6354
+            },
+            {
+              "symbol": "ALDX",
+              "return": 0.5,
+              "confidence": 6.057
+            },
+            {
               "symbol": "CDIO",
               "return": 0.5,
-              "confidence": 5.7451
+              "confidence": 5.6512
             },
             {
-              "symbol": "ANTA",
+              "symbol": "BGLC",
               "return": 0.5,
-              "confidence": 5.7058
-            },
-            {
-              "symbol": "BBLGW",
-              "return": 0.5,
-              "confidence": 5.0379
-            },
-            {
-              "symbol": "BNC",
-              "return": 0.5,
-              "confidence": 4.1863
-            },
-            {
-              "symbol": "ANPA",
-              "return": 0.5,
-              "confidence": 4.0686
-            },
-            {
-              "symbol": "CBRG",
-              "return": 0.5,
-              "confidence": 4.0449
+              "confidence": 4.7352
             },
             {
               "symbol": "BKYI",
               "return": 0.5,
-              "confidence": 4.0015
+              "confidence": 4.4255
             },
             {
-              "symbol": "BIGC",
+              "symbol": "BBLGW",
               "return": 0.5,
-              "confidence": 3.8654
+              "confidence": 4.3317
             },
             {
-              "symbol": "AISP",
+              "symbol": "BNC",
               "return": 0.5,
-              "confidence": 3.6819
+              "confidence": 4.1834
             },
             {
-              "symbol": "BXBL",
+              "symbol": "ANPA",
               "return": 0.5,
-              "confidence": 3.5963
+              "confidence": 4.1681
+            },
+            {
+              "symbol": "BHSE",
+              "return": 0.5,
+              "confidence": 3.9665
+            },
+            {
+              "symbol": "ATXG",
+              "return": 0.5,
+              "confidence": 3.9531
             }
           ],
           "sell_reasons": []
         },
         "previous_context": {
-          "run_timestamp": "2026-08-14T17:47:35.317239",
+          "run_timestamp": "2026-08-14T23:29:45.841833",
           "portfolio": {
-            "cash": -92891.28,
-            "total_value": 125936.37,
-            "cumulative_pnl": 25936.369999999995,
-            "num_positions": 50
+            "cash": -108026.32,
+            "total_value": 125893.07,
+            "cumulative_pnl": 25893.070000000007,
+            "num_positions": 52
           },
           "actions_this_run": {
             "buys": [],
@@ -291,65 +291,65 @@
           "reasoning": {
             "top_predictions": [
               {
-                "symbol": "ATGL",
+                "symbol": "CDIO",
                 "return": 0.5,
-                "confidence": 6.2966
-              },
-              {
-                "symbol": "ALDX",
-                "return": 0.5,
-                "confidence": 6.0924
-              },
-              {
-                "symbol": "BBLGW",
-                "return": 0.5,
-                "confidence": 5.1112
+                "confidence": 5.7451
               },
               {
                 "symbol": "ANTA",
                 "return": 0.5,
-                "confidence": 4.8875
+                "confidence": 5.7058
               },
               {
-                "symbol": "ASBP",
+                "symbol": "BBLGW",
                 "return": 0.5,
-                "confidence": 4.6074
+                "confidence": 5.0379
+              },
+              {
+                "symbol": "BNC",
+                "return": 0.5,
+                "confidence": 4.1863
               },
               {
                 "symbol": "ANPA",
                 "return": 0.5,
-                "confidence": 4.5028
-              },
-              {
-                "symbol": "ATXG",
-                "return": 0.5,
-                "confidence": 4.4466
-              },
-              {
-                "symbol": "AMST",
-                "return": 0.5,
-                "confidence": 4.2678
+                "confidence": 4.0686
               },
               {
                 "symbol": "CBRG",
                 "return": 0.5,
-                "confidence": 3.98
+                "confidence": 4.0449
+              },
+              {
+                "symbol": "BKYI",
+                "return": 0.5,
+                "confidence": 4.0015
+              },
+              {
+                "symbol": "BIGC",
+                "return": 0.5,
+                "confidence": 3.8654
+              },
+              {
+                "symbol": "AISP",
+                "return": 0.5,
+                "confidence": 3.6819
               },
               {
                 "symbol": "BXBL",
                 "return": 0.5,
-                "confidence": 3.8279
+                "confidence": 3.5963
               }
             ],
             "sell_reasons": []
           },
           "previous_context": {
-            "run_timestamp": "2026-08-14T00:35:09.324592",
+            "run_timestamp": "2026-08-14T17:47:35.317239",
             "portfolio": {
-              "cash": -108134.2,
-              "total_value": 126791.38,
-              "cumulative_pnl": 26791.380000000005,
-              "num_positions": 51
+              "cash": -92891.28,
+              "total_value": 125936.37,
+              "cumulative_pnl": 25936.369999999995,
+              "num_positions": 50
             },
             "actions_this_run": {
               "buys": [],
@@ -360,64 +360,64 @@
             "reasoning": {
               "top_predictions": [
                 {
-                  "symbol": "BBLGW",
-                  "return": 0.5,
-                  "confidence": 7.2788
-                },
-                {
                   "symbol": "ATGL",
                   "return": 0.5,
-                  "confidence": 6.455
+                  "confidence": 6.2966
                 },
                 {
-                  "symbol": "BZAI",
+                  "symbol": "ALDX",
                   "return": 0.5,
-                  "confidence": 5.0446
+                  "confidence": 6.0924
+                },
+                {
+                  "symbol": "BBLGW",
+                  "return": 0.5,
+                  "confidence": 5.1112
                 },
                 {
                   "symbol": "ANTA",
                   "return": 0.5,
-                  "confidence": 5.0147
+                  "confidence": 4.8875
                 },
                 {
-                  "symbol": "AMST",
+                  "symbol": "ASBP",
                   "return": 0.5,
-                  "confidence": 4.7706
-                },
-                {
-                  "symbol": "BNC",
-                  "return": 0.5,
-                  "confidence": 4.3445
-                },
-                {
-                  "symbol": "CNVCF",
-                  "return": 0.5,
-                  "confidence": 4.2938
+                  "confidence": 4.6074
                 },
                 {
                   "symbol": "ANPA",
                   "return": 0.5,
-                  "confidence": 4.2267
+                  "confidence": 4.5028
                 },
                 {
-                  "symbol": "AISP",
+                  "symbol": "ATXG",
                   "return": 0.5,
-                  "confidence": 4.0464
+                  "confidence": 4.4466
                 },
                 {
-                  "symbol": "ALZN",
+                  "symbol": "AMST",
                   "return": 0.5,
-                  "confidence": 3.6526
+                  "confidence": 4.2678
+                },
+                {
+                  "symbol": "CBRG",
+                  "return": 0.5,
+                  "confidence": 3.98
+                },
+                {
+                  "symbol": "BXBL",
+                  "return": 0.5,
+                  "confidence": 3.8279
                 }
               ],
               "sell_reasons": []
             },
             "previous_context": {
-              "run_timestamp": "2026-08-13T17:54:32.784982",
+              "run_timestamp": "2026-08-14T00:35:09.324592",
               "portfolio": {
                 "cash": -108134.2,
-                "total_value": 124348.19,
-                "cumulative_pnl": 24348.190000000002,
+                "total_value": 126791.38,
+                "cumulative_pnl": 26791.380000000005,
                 "num_positions": 51
               },
               "actions_this_run": {
@@ -429,64 +429,64 @@
               "reasoning": {
                 "top_predictions": [
                   {
-                    "symbol": "ALDX",
+                    "symbol": "BBLGW",
                     "return": 0.5,
-                    "confidence": 5.9669
+                    "confidence": 7.2788
                   },
                   {
                     "symbol": "ATGL",
                     "return": 0.5,
-                    "confidence": 5.4533
-                  },
-                  {
-                    "symbol": "CDIO",
-                    "return": 0.5,
-                    "confidence": 5.1817
+                    "confidence": 6.455
                   },
                   {
                     "symbol": "BZAI",
                     "return": 0.5,
-                    "confidence": 4.6357
-                  },
-                  {
-                    "symbol": "AURE",
-                    "return": 0.5,
-                    "confidence": 4.4205
-                  },
-                  {
-                    "symbol": "AMST",
-                    "return": 0.5,
-                    "confidence": 4.3334
-                  },
-                  {
-                    "symbol": "BGLC",
-                    "return": 0.5,
-                    "confidence": 4.3197
+                    "confidence": 5.0446
                   },
                   {
                     "symbol": "ANTA",
                     "return": 0.5,
-                    "confidence": 4.2154
+                    "confidence": 5.0147
+                  },
+                  {
+                    "symbol": "AMST",
+                    "return": 0.5,
+                    "confidence": 4.7706
+                  },
+                  {
+                    "symbol": "BNC",
+                    "return": 0.5,
+                    "confidence": 4.3445
                   },
                   {
                     "symbol": "CNVCF",
                     "return": 0.5,
-                    "confidence": 4.1717
+                    "confidence": 4.2938
                   },
                   {
-                    "symbol": "BIRD",
+                    "symbol": "ANPA",
                     "return": 0.5,
-                    "confidence": 4.1593
+                    "confidence": 4.2267
+                  },
+                  {
+                    "symbol": "AISP",
+                    "return": 0.5,
+                    "confidence": 4.0464
+                  },
+                  {
+                    "symbol": "ALZN",
+                    "return": 0.5,
+                    "confidence": 3.6526
                   }
                 ],
                 "sell_reasons": []
               },
               "previous_context": {
-                "run_timestamp": "2026-08-12T23:41:19.221687",
+                "run_timestamp": "2026-08-13T17:54:32.784982",
                 "portfolio": {
-                  "cash": -108134.17,
-                  "total_value": 124666.25,
-                  "cumulative_pnl": 24666.25,
+                  "cash": -108134.2,
+                  "total_value": 124348.19,
+                  "cumulative_pnl": 24348.190000000002,
                   "num_positions": 51
                 },
                 "actions_this_run": {
@@ -500,63 +500,63 @@
                     {
                       "symbol": "ALDX",
                       "return": 0.5,
-                      "confidence": 6.3442
-                    },
-                    {
-                      "symbol": "CNTQ",
-                      "return": 0.5,
-                      "confidence": 6.1131
+                      "confidence": 5.9669
                     },
                     {
                       "symbol": "ATGL",
                       "return": 0.5,
-                      "confidence": 5.1752
+                      "confidence": 5.4533
                     },
                     {
                       "symbol": "CDIO",
                       "return": 0.5,
-                      "confidence": 5.0373
-                    },
-                    {
-                      "symbol": "BNC",
-                      "return": 0.5,
-                      "confidence": 4.8398
-                    },
-                    {
-                      "symbol": "ALZN",
-                      "return": 0.5,
-                      "confidence": 4.725
-                    },
-                    {
-                      "symbol": "AMST",
-                      "return": 0.5,
-                      "confidence": 4.5462
+                      "confidence": 5.1817
                     },
                     {
                       "symbol": "BZAI",
                       "return": 0.5,
-                      "confidence": 4.2698
+                      "confidence": 4.6357
                     },
                     {
-                      "symbol": "ANPA",
+                      "symbol": "AURE",
                       "return": 0.5,
-                      "confidence": 4.2019
+                      "confidence": 4.4205
                     },
                     {
-                      "symbol": "ASBP",
+                      "symbol": "AMST",
                       "return": 0.5,
-                      "confidence": 4.1394
+                      "confidence": 4.3334
+                    },
+                    {
+                      "symbol": "BGLC",
+                      "return": 0.5,
+                      "confidence": 4.3197
+                    },
+                    {
+                      "symbol": "ANTA",
+                      "return": 0.5,
+                      "confidence": 4.2154
+                    },
+                    {
+                      "symbol": "CNVCF",
+                      "return": 0.5,
+                      "confidence": 4.1717
+                    },
+                    {
+                      "symbol": "BIRD",
+                      "return": 0.5,
+                      "confidence": 4.1593
                     }
                   ],
                   "sell_reasons": []
                 },
                 "previous_context": {
-                  "run_timestamp": "2026-08-12T18:26:30.867636",
+                  "run_timestamp": "2026-08-12T23:41:19.221687",
                   "portfolio": {
-                    "cash": -108198.67,
-                    "total_value": 123548.92,
-                    "cumulative_pnl": 23548.92,
-                    "num_positions": 52
+                    "cash": -108134.17,
+                    "total_value": 124666.25,
+                    "cumulative_pnl": 24666.25,
+                    "num_positions": 51
                   },
                   "actions_this_run": {
                     "buys": [],
@@ -567,65 +567,65 @@
                   "reasoning": {
                     "top_predictions": [
                       {
-                        "symbol": "BBLGW",
-                        "return": 0.5,
-                        "confidence": 6.5182
-                      },
-                      {
                         "symbol": "ALDX",
                         "return": 0.5,
-                        "confidence": 5.4666
+                        "confidence": 6.3442
+                      },
+                      {
+                        "symbol": "CNTQ",
+                        "return": 0.5,
+                        "confidence": 6.1131
+                      },
+                      {
+                        "symbol": "ATGL",
+                        "return": 0.5,
+                        "confidence": 5.1752
                       },
                       {
                         "symbol": "CDIO",
                         "return": 0.5,
-                        "confidence": 4.9829
+                        "confidence": 5.0373
                       },
                       {
-                        "symbol": "BTCS",
+                        "symbol": "BNC",
                         "return": 0.5,
-                        "confidence": 4.8056
-                      },
-                      {
-                        "symbol": "CNVCF",
-                        "return": 0.5,
-                        "confidence": 4.195
-                      },
-                      {
-                        "symbol": "BZAI",
-                        "return": 0.5,
-                        "confidence": 4.1472
+                        "confidence": 4.8398
                       },
                       {
                         "symbol": "ALZN",
                         "return": 0.5,
-                        "confidence": 4.0971
+                        "confidence": 4.725
                       },
                       {
                         "symbol": "AMST",
                         "return": 0.5,
-                        "confidence": 3.9437
+                        "confidence": 4.5462
                       },
                       {
-                        "symbol": "AGNT",
+                        "symbol": "BZAI",
                         "return": 0.5,
-                        "confidence": 3.8811
+                        "confidence": 4.2698
                       },
                       {
                         "symbol": "ANPA",
                         "return": 0.5,
-                        "confidence": 3.8302
+                        "confidence": 4.2019
+                      },
+                      {
+                        "symbol": "ASBP",
+                        "return": 0.5,
+                        "confidence": 4.1394
                       }
                     ],
                     "sell_reasons": []
                   },
                   "previous_context": {
-                    "run_timestamp": "2026-08-11T23:40:50.530810",
+                    "run_timestamp": "2026-08-12T18:26:30.867636",
                     "portfolio": {
                       "cash": -108198.67,
-                      "total_value": 116329.56,
-                      "cumulative_pnl": 16329.559999999998,
-                      "num_positions": 51
+                      "total_value": 123548.92,
+                      "cumulative_pnl": 23548.92,
+                      "num_positions": 52
                     },
                     "actions_this_run": {
                       "buys": [],
@@ -636,64 +636,64 @@
                     "reasoning": {
                       "top_predictions": [
                         {
+                          "symbol": "BBLGW",
+                          "return": 0.5,
+                          "confidence": 6.5182
+                        },
+                        {
                           "symbol": "ALDX",
                           "return": 0.5,
-                          "confidence": 6.4292
+                          "confidence": 5.4666
                         },
                         {
-                          "symbol": "CNTQ",
+                          "symbol": "CDIO",
                           "return": 0.5,
-                          "confidence": 5.3075
+                          "confidence": 4.9829
                         },
                         {
-                          "symbol": "BNC",
+                          "symbol": "BTCS",
                           "return": 0.5,
-                          "confidence": 4.642
-                        },
-                        {
-                          "symbol": "BZAI",
-                          "return": 0.5,
-                          "confidence": 4.598
-                        },
-                        {
-                          "symbol": "ALZN",
-                          "return": 0.5,
-                          "confidence": 4.3111
+                          "confidence": 4.8056
                         },
                         {
                           "symbol": "CNVCF",
                           "return": 0.5,
-                          "confidence": 4.2264
+                          "confidence": 4.195
                         },
                         {
-                          "symbol": "AGNT",
+                          "symbol": "BZAI",
                           "return": 0.5,
-                          "confidence": 4.2112
+                          "confidence": 4.1472
+                        },
+                        {
+                          "symbol": "ALZN",
+                          "return": 0.5,
+                          "confidence": 4.0971
                         },
                         {
                           "symbol": "AMST",
                           "return": 0.5,
-                          "confidence": 4.1886
+                          "confidence": 3.9437
                         },
                         {
-                          "symbol": "ATGL",
+                          "symbol": "AGNT",
                           "return": 0.5,
-                          "confidence": 4.1335
+                          "confidence": 3.8811
                         },
                         {
-                          "symbol": "BIGC",
+                          "symbol": "ANPA",
                           "return": 0.5,
-                          "confidence": 3.8147
+                          "confidence": 3.8302
                         }
                       ],
                       "sell_reasons": []
                     },
                     "previous_context": {
-                      "run_timestamp": "2026-08-11T17:56:42.651428",
+                      "run_timestamp": "2026-08-11T23:40:50.530810",
                       "portfolio": {
                         "cash": -108198.67,
-                        "total_value": 116028.75,
-                        "cumulative_pnl": 16028.75,
+                        "total_value": 116329.56,
+                        "cumulative_pnl": 16329.559999999998,
                         "num_positions": 51
                       },
                       "actions_this_run": {
@@ -707,63 +707,63 @@
                           {
                             "symbol": "ALDX",
                             "return": 0.5,
-                            "confidence": 6.2117
+                            "confidence": 6.4292
                           },
                           {
                             "symbol": "CNTQ",
                             "return": 0.5,
-                            "confidence": 5.6447
-                          },
-                          {
-                            "symbol": "BTCS",
-                            "return": 0.5,
-                            "confidence": 5.0289
+                            "confidence": 5.3075
                           },
                           {
                             "symbol": "BNC",
                             "return": 0.5,
-                            "confidence": 4.7904
+                            "confidence": 4.642
                           },
                           {
                             "symbol": "BZAI",
                             "return": 0.5,
-                            "confidence": 4.7728
-                          },
-                          {
-                            "symbol": "ATGL",
-                            "return": 0.5,
-                            "confidence": 4.6068
+                            "confidence": 4.598
                           },
                           {
                             "symbol": "ALZN",
                             "return": 0.5,
-                            "confidence": 4.4477
+                            "confidence": 4.3111
                           },
                           {
-                            "symbol": "ANPA",
+                            "symbol": "CNVCF",
                             "return": 0.5,
-                            "confidence": 4.4297
-                          },
-                          {
-                            "symbol": "ANTA",
-                            "return": 0.5,
-                            "confidence": 4.3919
+                            "confidence": 4.2264
                           },
                           {
                             "symbol": "AGNT",
                             "return": 0.5,
-                            "confidence": 4.2418
+                            "confidence": 4.2112
+                          },
+                          {
+                            "symbol": "AMST",
+                            "return": 0.5,
+                            "confidence": 4.1886
+                          },
+                          {
+                            "symbol": "ATGL",
+                            "return": 0.5,
+                            "confidence": 4.1335
+                          },
+                          {
+                            "symbol": "BIGC",
+                            "return": 0.5,
+                            "confidence": 3.8147
                           }
                         ],
                         "sell_reasons": []
                       },
                       "previous_context": {
-                        "run_timestamp": "2026-08-11T00:12:36.802077",
+                        "run_timestamp": "2026-08-11T17:56:42.651428",
                         "portfolio": {
                           "cash": -108198.67,
-                          "total_value": 122511.43,
-                          "cumulative_pnl": 22511.429999999993,
-                          "num_positions": 52
+                          "total_value": 116028.75,
+                          "cumulative_pnl": 16028.75,
+                          "num_positions": 51
                         },
                         "actions_this_run": {
                           "buys": [],
@@ -774,64 +774,64 @@
                         "reasoning": {
                           "top_predictions": [
                             {
-                              "symbol": "CDIO",
-                              "return": 0.5,
-                              "confidence": 7.6991
-                            },
-                            {
                               "symbol": "ALDX",
                               "return": 0.5,
-                              "confidence": 6.2565
+                              "confidence": 6.2117
+                            },
+                            {
+                              "symbol": "CNTQ",
+                              "return": 0.5,
+                              "confidence": 5.6447
+                            },
+                            {
+                              "symbol": "BTCS",
+                              "return": 0.5,
+                              "confidence": 5.0289
                             },
                             {
                               "symbol": "BNC",
                               "return": 0.5,
-                              "confidence": 5.6525
+                              "confidence": 4.7904
                             },
                             {
                               "symbol": "BZAI",
                               "return": 0.5,
-                              "confidence": 5.1838
+                              "confidence": 4.7728
                             },
                             {
-                              "symbol": "ANTA",
+                              "symbol": "ATGL",
                               "return": 0.5,
-                              "confidence": 4.9052
+                              "confidence": 4.6068
                             },
                             {
-                              "symbol": "BBLGW",
+                              "symbol": "ALZN",
                               "return": 0.5,
-                              "confidence": 4.5215
+                              "confidence": 4.4477
                             },
                             {
                               "symbol": "ANPA",
                               "return": 0.5,
-                              "confidence": 4.4661
+                              "confidence": 4.4297
                             },
                             {
-                              "symbol": "ATXG",
+                              "symbol": "ANTA",
                               "return": 0.5,
-                              "confidence": 4.2939
+                              "confidence": 4.3919
                             },
                             {
                               "symbol": "AGNT",
                               "return": 0.5,
-                              "confidence": 4.2466
-                            },
-                            {
-                              "symbol": "CNVCF",
-                              "return": 0.5,
-                              "confidence": 3.9259
+                              "confidence": 4.2418
                             }
                           ],
                           "sell_reasons": []
                         },
                         "previous_context": {
-                          "run_timestamp": "2026-08-10T17:57:11.658414",
+                          "run_timestamp": "2026-08-11T00:12:36.802077",
                           "portfolio": {
                             "cash": -108198.67,
-                            "total_value": 122464.09,
-                            "cumulative_pnl": 22464.089999999997,
+                            "total_value": 122511.43,
+                            "cumulative_pnl": 22511.429999999993,
                             "num_positions": 52
                           },
                           "actions_this_run": {
@@ -843,64 +843,64 @@
                           "reasoning": {
                             "top_predictions": [
                               {
-                                "symbol": "ACXP",
+                                "symbol": "CDIO",
                                 "return": 0.5,
-                                "confidence": 8.4922
+                                "confidence": 7.6991
                               },
                               {
                                 "symbol": "ALDX",
                                 "return": 0.5,
-                                "confidence": 6.9329
-                              },
-                              {
-                                "symbol": "CNTQ",
-                                "return": 0.5,
-                                "confidence": 5.7507
-                              },
-                              {
-                                "symbol": "BHSE",
-                                "return": 0.5,
-                                "confidence": 5.5447
+                                "confidence": 6.2565
                               },
                               {
                                 "symbol": "BNC",
                                 "return": 0.5,
-                                "confidence": 5.2517
+                                "confidence": 5.6525
                               },
                               {
-                                "symbol": "ATXG",
+                                "symbol": "BZAI",
                                 "return": 0.5,
-                                "confidence": 5.0755
-                              },
-                              {
-                                "symbol": "ATGL",
-                                "return": 0.5,
-                                "confidence": 4.815
-                              },
-                              {
-                                "symbol": "ALZN",
-                                "return": 0.5,
-                                "confidence": 4.5554
+                                "confidence": 5.1838
                               },
                               {
                                 "symbol": "ANTA",
                                 "return": 0.5,
-                                "confidence": 4.4913
+                                "confidence": 4.9052
                               },
                               {
-                                "symbol": "BGLC",
+                                "symbol": "BBLGW",
                                 "return": 0.5,
-                                "confidence": 4.4454
+                                "confidence": 4.5215
+                              },
+                              {
+                                "symbol": "ANPA",
+                                "return": 0.5,
+                                "confidence": 4.4661
+                              },
+                              {
+                                "symbol": "ATXG",
+                                "return": 0.5,
+                                "confidence": 4.2939
+                              },
+                              {
+                                "symbol": "AGNT",
+                                "return": 0.5,
+                                "confidence": 4.2466
+                              },
+                              {
+                                "symbol": "CNVCF",
+                                "return": 0.5,
+                                "confidence": 3.9259
                               }
                             ],
                             "sell_reasons": []
                           },
                           "previous_context": {
-                            "run_timestamp": "2026-08-07T23:39:55.909824",
+                            "run_timestamp": "2026-08-10T17:57:11.658414",
                             "portfolio": {
-                              "cash": -108198.48,
-                              "total_value": 124422.89,
-                              "cumulative_pnl": 24422.89,
+                              "cash": -108198.67,
+                              "total_value": 122464.09,
+                              "cumulative_pnl": 22464.089999999997,
                               "num_positions": 52
                             },
                             "actions_this_run": {
@@ -912,65 +912,65 @@
                             "reasoning": {
                               "top_predictions": [
                                 {
-                                  "symbol": "AQMS",
+                                  "symbol": "ACXP",
                                   "return": 0.5,
-                                  "confidence": 6.6238
-                                },
-                                {
-                                  "symbol": "BNC",
-                                  "return": 0.5,
-                                  "confidence": 6.4328
+                                  "confidence": 8.4922
                                 },
                                 {
                                   "symbol": "ALDX",
                                   "return": 0.5,
-                                  "confidence": 6.4055
+                                  "confidence": 6.9329
                                 },
                                 {
-                                  "symbol": "ARIZ",
+                                  "symbol": "CNTQ",
                                   "return": 0.5,
-                                  "confidence": 5.4758
+                                  "confidence": 5.7507
+                                },
+                                {
+                                  "symbol": "BHSE",
+                                  "return": 0.5,
+                                  "confidence": 5.5447
+                                },
+                                {
+                                  "symbol": "BNC",
+                                  "return": 0.5,
+                                  "confidence": 5.2517
                                 },
                                 {
                                   "symbol": "ATXG",
                                   "return": 0.5,
-                                  "confidence": 5.3396
+                                  "confidence": 5.0755
+                                },
+                                {
+                                  "symbol": "ATGL",
+                                  "return": 0.5,
+                                  "confidence": 4.815
+                                },
+                                {
+                                  "symbol": "ALZN",
+                                  "return": 0.5,
+                                  "confidence": 4.5554
+                                },
+                                {
+                                  "symbol": "ANTA",
+                                  "return": 0.5,
+                                  "confidence": 4.4913
                                 },
                                 {
                                   "symbol": "BGLC",
                                   "return": 0.5,
-                                  "confidence": 5.0458
-                                },
-                                {
-                                  "symbol": "AMST",
-                                  "return": 0.5,
-                                  "confidence": 4.7791
-                                },
-                                {
-                                  "symbol": "CNVCF",
-                                  "return": 0.5,
-                                  "confidence": 4.7445
-                                },
-                                {
-                                  "symbol": "BBLGW",
-                                  "return": 0.5,
-                                  "confidence": 4.7085
-                                },
-                                {
-                                  "symbol": "BZAI",
-                                  "return": 0.5,
-                                  "confidence": 4.6133
+                                  "confidence": 4.4454
                                 }
                               ],
                               "sell_reasons": []
                             },
                             "previous_context": {
-                              "run_timestamp": "2026-08-07T17:52:33.978873",
+                              "run_timestamp": "2026-08-07T23:39:55.909824",
                               "portfolio": {
-                                "cash": -85840.32,
-                                "total_value": 124344.78,
-                                "cumulative_pnl": 24344.78,
-                                "num_positions": 49
+                                "cash": -108198.48,
+                                "total_value": 124422.89,
+                                "cumulative_pnl": 24422.89,
+                                "num_positions": 52
                               },
                               "actions_this_run": {
                                 "buys": [],
@@ -981,65 +981,65 @@
                               "reasoning": {
                                 "top_predictions": [
                                   {
-                                    "symbol": "CDIO",
+                                    "symbol": "AQMS",
                                     "return": 0.5,
-                                    "confidence": 7.8616
-                                  },
-                                  {
-                                    "symbol": "ATXG",
-                                    "return": 0.5,
-                                    "confidence": 6.1322
-                                  },
-                                  {
-                                    "symbol": "ATGL",
-                                    "return": 0.5,
-                                    "confidence": 6.0887
-                                  },
-                                  {
-                                    "symbol": "BHSE",
-                                    "return": 0.5,
-                                    "confidence": 5.7435
-                                  },
-                                  {
-                                    "symbol": "ALDX",
-                                    "return": 0.5,
-                                    "confidence": 5.5475
+                                    "confidence": 6.6238
                                   },
                                   {
                                     "symbol": "BNC",
                                     "return": 0.5,
-                                    "confidence": 5.5156
+                                    "confidence": 6.4328
                                   },
                                   {
-                                    "symbol": "ANTA",
+                                    "symbol": "ALDX",
                                     "return": 0.5,
-                                    "confidence": 4.7735
+                                    "confidence": 6.4055
                                   },
                                   {
-                                    "symbol": "BZAI",
+                                    "symbol": "ARIZ",
                                     "return": 0.5,
-                                    "confidence": 4.6992
+                                    "confidence": 5.4758
+                                  },
+                                  {
+                                    "symbol": "ATXG",
+                                    "return": 0.5,
+                                    "confidence": 5.3396
+                                  },
+                                  {
+                                    "symbol": "BGLC",
+                                    "return": 0.5,
+                                    "confidence": 5.0458
                                   },
                                   {
                                     "symbol": "AMST",
                                     "return": 0.5,
-                                    "confidence": 4.6761
+                                    "confidence": 4.7791
                                   },
                                   {
-                                    "symbol": "CBRG",
+                                    "symbol": "CNVCF",
                                     "return": 0.5,
-                                    "confidence": 4.5929
+                                    "confidence": 4.7445
+                                  },
+                                  {
+                                    "symbol": "BBLGW",
+                                    "return": 0.5,
+                                    "confidence": 4.7085
+                                  },
+                                  {
+                                    "symbol": "BZAI",
+                                    "return": 0.5,
+                                    "confidence": 4.6133
                                   }
                                 ],
                                 "sell_reasons": []
                               },
                               "previous_context": {
-                                "run_timestamp": "2026-08-07T04:38:56.331134",
+                                "run_timestamp": "2026-08-07T17:52:33.978873",
                                 "portfolio": {
-                                  "cash": -88378.79,
-                                  "total_value": 121059.69,
-                                  "cumulative_pnl": 21059.690000000002,
-                                  "num_positions": 51
+                                  "cash": -85840.32,
+                                  "total_value": 124344.78,
+                                  "cumulative_pnl": 24344.78,
+                                  "num_positions": 49
                                 },
                                 "actions_this_run": {
                                   "buys": [],
@@ -1050,64 +1050,64 @@
                                 "reasoning": {
                                   "top_predictions": [
                                     {
-                                      "symbol": "ACXP",
+                                      "symbol": "CDIO",
                                       "return": 0.5,
-                                      "confidence": 9.287
+                                      "confidence": 7.8616
                                     },
                                     {
-                                      "symbol": "BNC",
+                                      "symbol": "ATXG",
                                       "return": 0.5,
-                                      "confidence": 6.2276
+                                      "confidence": 6.1322
+                                    },
+                                    {
+                                      "symbol": "ATGL",
+                                      "return": 0.5,
+                                      "confidence": 6.0887
+                                    },
+                                    {
+                                      "symbol": "BHSE",
+                                      "return": 0.5,
+                                      "confidence": 5.7435
                                     },
                                     {
                                       "symbol": "ALDX",
                                       "return": 0.5,
-                                      "confidence": 5.782
+                                      "confidence": 5.5475
+                                    },
+                                    {
+                                      "symbol": "BNC",
+                                      "return": 0.5,
+                                      "confidence": 5.5156
+                                    },
+                                    {
+                                      "symbol": "ANTA",
+                                      "return": 0.5,
+                                      "confidence": 4.7735
+                                    },
+                                    {
+                                      "symbol": "BZAI",
+                                      "return": 0.5,
+                                      "confidence": 4.6992
                                     },
                                     {
                                       "symbol": "AMST",
                                       "return": 0.5,
-                                      "confidence": 4.6957
-                                    },
-                                    {
-                                      "symbol": "AGNT",
-                                      "return": 0.5,
-                                      "confidence": 4.468
+                                      "confidence": 4.6761
                                     },
                                     {
                                       "symbol": "CBRG",
                                       "return": 0.5,
-                                      "confidence": 4.4554
-                                    },
-                                    {
-                                      "symbol": "AIRO",
-                                      "return": 0.5,
-                                      "confidence": 4.4443
-                                    },
-                                    {
-                                      "symbol": "ALZN",
-                                      "return": 0.5,
-                                      "confidence": 4.3077
-                                    },
-                                    {
-                                      "symbol": "BCAR",
-                                      "return": 0.5,
-                                      "confidence": 4.261
-                                    },
-                                    {
-                                      "symbol": "BXBL",
-                                      "return": 0.5,
-                                      "confidence": 3.8732
+                                      "confidence": 4.5929
                                     }
                                   ],
                                   "sell_reasons": []
                                 },
                                 "previous_context": {
-                                  "run_timestamp": "2026-08-06T00:03:20.293741",
+                                  "run_timestamp": "2026-08-07T04:38:56.331134",
                                   "portfolio": {
-                                    "cash": -88378.59,
-                                    "total_value": 119173.45,
-                                    "cumulative_pnl": 19173.449999999997,
+                                    "cash": -88378.79,
+                                    "total_value": 121059.69,
+                                    "cumulative_pnl": 21059.690000000002,
                                     "num_positions": 51
                                   },
                                   "actions_this_run": {
@@ -1119,65 +1119,65 @@
                                   "reasoning": {
                                     "top_predictions": [
                                       {
-                                        "symbol": "ATGL",
+                                        "symbol": "ACXP",
                                         "return": 0.5,
-                                        "confidence": 6.0706
+                                        "confidence": 9.287
                                       },
                                       {
                                         "symbol": "BNC",
                                         "return": 0.5,
-                                        "confidence": 5.4606
+                                        "confidence": 6.2276
                                       },
                                       {
                                         "symbol": "ALDX",
                                         "return": 0.5,
-                                        "confidence": 5.4584
+                                        "confidence": 5.782
                                       },
                                       {
-                                        "symbol": "BGLC",
+                                        "symbol": "AMST",
                                         "return": 0.5,
-                                        "confidence": 5.2137
+                                        "confidence": 4.6957
                                       },
                                       {
-                                        "symbol": "BTCS",
+                                        "symbol": "AGNT",
                                         "return": 0.5,
-                                        "confidence": 5.0011
-                                      },
-                                      {
-                                        "symbol": "ANGI",
-                                        "return": 0.5,
-                                        "confidence": 4.9448
-                                      },
-                                      {
-                                        "symbol": "BCAR",
-                                        "return": 0.5,
-                                        "confidence": 4.5398
+                                        "confidence": 4.468
                                       },
                                       {
                                         "symbol": "CBRG",
                                         "return": 0.5,
-                                        "confidence": 4.4388
+                                        "confidence": 4.4554
                                       },
                                       {
-                                        "symbol": "AISP",
+                                        "symbol": "AIRO",
                                         "return": 0.5,
-                                        "confidence": 4.0635
+                                        "confidence": 4.4443
+                                      },
+                                      {
+                                        "symbol": "ALZN",
+                                        "return": 0.5,
+                                        "confidence": 4.3077
+                                      },
+                                      {
+                                        "symbol": "BCAR",
+                                        "return": 0.5,
+                                        "confidence": 4.261
                                       },
                                       {
                                         "symbol": "BXBL",
                                         "return": 0.5,
-                                        "confidence": 4.034
+                                        "confidence": 3.8732
                                       }
                                     ],
                                     "sell_reasons": []
                                   },
                                   "previous_context": {
-                                    "run_timestamp": "2026-08-05T19:24:18.886385",
+                                    "run_timestamp": "2026-08-06T00:03:20.293741",
                                     "portfolio": {
-                                      "cash": -88584.73,
-                                      "total_value": 118279.1,
-                                      "cumulative_pnl": 18279.100000000006,
-                                      "num_positions": 52
+                                      "cash": -88378.59,
+                                      "total_value": 119173.45,
+                                      "cumulative_pnl": 19173.449999999997,
+                                      "num_positions": 51
                                     },
                                     "actions_this_run": {
                                       "buys": [],
@@ -1188,65 +1188,65 @@
                                     "reasoning": {
                                       "top_predictions": [
                                         {
-                                          "symbol": "CDIO",
-                                          "return": 0.5,
-                                          "confidence": 7.7075
-                                        },
-                                        {
-                                          "symbol": "ALDX",
-                                          "return": 0.5,
-                                          "confidence": 6.1279
-                                        },
-                                        {
                                           "symbol": "ATGL",
                                           "return": 0.5,
-                                          "confidence": 6.1133
+                                          "confidence": 6.0706
                                         },
                                         {
                                           "symbol": "BNC",
                                           "return": 0.5,
-                                          "confidence": 5.8518
+                                          "confidence": 5.4606
                                         },
                                         {
-                                          "symbol": "BCAR",
+                                          "symbol": "ALDX",
                                           "return": 0.5,
-                                          "confidence": 4.6754
+                                          "confidence": 5.4584
                                         },
                                         {
                                           "symbol": "BGLC",
                                           "return": 0.5,
-                                          "confidence": 4.5292
+                                          "confidence": 5.2137
                                         },
                                         {
-                                          "symbol": "ALZN",
+                                          "symbol": "BTCS",
                                           "return": 0.5,
-                                          "confidence": 4.3661
+                                          "confidence": 5.0011
+                                        },
+                                        {
+                                          "symbol": "ANGI",
+                                          "return": 0.5,
+                                          "confidence": 4.9448
+                                        },
+                                        {
+                                          "symbol": "BCAR",
+                                          "return": 0.5,
+                                          "confidence": 4.5398
                                         },
                                         {
                                           "symbol": "CBRG",
                                           "return": 0.5,
-                                          "confidence": 4.1743
+                                          "confidence": 4.4388
                                         },
                                         {
-                                          "symbol": "BBLGW",
+                                          "symbol": "AISP",
                                           "return": 0.5,
-                                          "confidence": 3.9378
+                                          "confidence": 4.0635
                                         },
                                         {
-                                          "symbol": "ANPA",
+                                          "symbol": "BXBL",
                                           "return": 0.5,
-                                          "confidence": 3.901
+                                          "confidence": 4.034
                                         }
                                       ],
                                       "sell_reasons": []
                                     },
                                     "previous_context": {
-                                      "run_timestamp": "2026-08-05T00:09:43.075483",
+                                      "run_timestamp": "2026-08-05T19:24:18.886385",
                                       "portfolio": {
-                                        "cash": -68318.47,
-                                        "total_value": 111487.33,
-                                        "cumulative_pnl": 11487.330000000002,
-                                        "num_positions": 48
+                                        "cash": -88584.73,
+                                        "total_value": 118279.1,
+                                        "cumulative_pnl": 18279.100000000006,
+                                        "num_positions": 52
                                       },
                                       "actions_this_run": {
                                         "buys": [],
@@ -1257,65 +1257,65 @@
                                       "reasoning": {
                                         "top_predictions": [
                                           {
+                                            "symbol": "CDIO",
+                                            "return": 0.5,
+                                            "confidence": 7.7075
+                                          },
+                                          {
+                                            "symbol": "ALDX",
+                                            "return": 0.5,
+                                            "confidence": 6.1279
+                                          },
+                                          {
+                                            "symbol": "ATGL",
+                                            "return": 0.5,
+                                            "confidence": 6.1133
+                                          },
+                                          {
                                             "symbol": "BNC",
                                             "return": 0.5,
-                                            "confidence": 6.5144
-                                          },
-                                          {
-                                            "symbol": "ANTA",
-                                            "return": 0.5,
-                                            "confidence": 6.2775
-                                          },
-                                          {
-                                            "symbol": "BGLC",
-                                            "return": 0.5,
-                                            "confidence": 5.7428
-                                          },
-                                          {
-                                            "symbol": "ANPA",
-                                            "return": 0.5,
-                                            "confidence": 4.4117
+                                            "confidence": 5.8518
                                           },
                                           {
                                             "symbol": "BCAR",
                                             "return": 0.5,
-                                            "confidence": 4.3239
+                                            "confidence": 4.6754
                                           },
                                           {
-                                            "symbol": "AMST",
+                                            "symbol": "BGLC",
                                             "return": 0.5,
-                                            "confidence": 4.2829
+                                            "confidence": 4.5292
                                           },
                                           {
-                                            "symbol": "AISP",
+                                            "symbol": "ALZN",
                                             "return": 0.5,
-                                            "confidence": 4.1402
-                                          },
-                                          {
-                                            "symbol": "BHSE",
-                                            "return": 0.5,
-                                            "confidence": 4.0514
-                                          },
-                                          {
-                                            "symbol": "BBLGW",
-                                            "return": 0.5,
-                                            "confidence": 3.6401
+                                            "confidence": 4.3661
                                           },
                                           {
                                             "symbol": "CBRG",
                                             "return": 0.5,
-                                            "confidence": 3.5717
+                                            "confidence": 4.1743
+                                          },
+                                          {
+                                            "symbol": "BBLGW",
+                                            "return": 0.5,
+                                            "confidence": 3.9378
+                                          },
+                                          {
+                                            "symbol": "ANPA",
+                                            "return": 0.5,
+                                            "confidence": 3.901
                                           }
                                         ],
                                         "sell_reasons": []
                                       },
                                       "previous_context": {
-                                        "run_timestamp": "2026-08-04T19:44:09.887140",
+                                        "run_timestamp": "2026-08-05T00:09:43.075483",
                                         "portfolio": {
-                                          "cash": -72083.41,
-                                          "total_value": 111617.68,
-                                          "cumulative_pnl": 11617.679999999993,
-                                          "num_positions": 49
+                                          "cash": -68318.47,
+                                          "total_value": 111487.33,
+                                          "cumulative_pnl": 11487.330000000002,
+                                          "num_positions": 48
                                         },
                                         "actions_this_run": {
                                           "buys": [],
@@ -1328,62 +1328,62 @@
                                             {
                                               "symbol": "BNC",
                                               "return": 0.5,
-                                              "confidence": 5.8584
+                                              "confidence": 6.5144
                                             },
                                             {
-                                              "symbol": "CNVCF",
+                                              "symbol": "ANTA",
                                               "return": 0.5,
-                                              "confidence": 5.5707
-                                            },
-                                            {
-                                              "symbol": "ATGL",
-                                              "return": 0.5,
-                                              "confidence": 5.4617
+                                              "confidence": 6.2775
                                             },
                                             {
                                               "symbol": "BGLC",
                                               "return": 0.5,
-                                              "confidence": 5.2541
-                                            },
-                                            {
-                                              "symbol": "AMST",
-                                              "return": 0.5,
-                                              "confidence": 4.7188
+                                              "confidence": 5.7428
                                             },
                                             {
                                               "symbol": "ANPA",
                                               "return": 0.5,
-                                              "confidence": 4.5398
-                                            },
-                                            {
-                                              "symbol": "AGNT",
-                                              "return": 0.5,
-                                              "confidence": 4.3123
-                                            },
-                                            {
-                                              "symbol": "BXBL",
-                                              "return": 0.5,
-                                              "confidence": 4.036
+                                              "confidence": 4.4117
                                             },
                                             {
                                               "symbol": "BCAR",
                                               "return": 0.5,
-                                              "confidence": 3.8824
+                                              "confidence": 4.3239
                                             },
                                             {
-                                              "symbol": "ALZN",
+                                              "symbol": "AMST",
                                               "return": 0.5,
-                                              "confidence": 3.8395
+                                              "confidence": 4.2829
+                                            },
+                                            {
+                                              "symbol": "AISP",
+                                              "return": 0.5,
+                                              "confidence": 4.1402
+                                            },
+                                            {
+                                              "symbol": "BHSE",
+                                              "return": 0.5,
+                                              "confidence": 4.0514
+                                            },
+                                            {
+                                              "symbol": "BBLGW",
+                                              "return": 0.5,
+                                              "confidence": 3.6401
+                                            },
+                                            {
+                                              "symbol": "CBRG",
+                                              "return": 0.5,
+                                              "confidence": 3.5717
                                             }
                                           ],
                                           "sell_reasons": []
                                         },
                                         "previous_context": {
-                                          "run_timestamp": "2026-08-04T00:30:32.353452",
+                                          "run_timestamp": "2026-08-04T19:44:09.887140",
                                           "portfolio": {
-                                            "cash": -88414.38,
-                                            "total_value": 116605.09,
-                                            "cumulative_pnl": 16605.089999999997,
+                                            "cash": -72083.41,
+                                            "total_value": 111617.68,
+                                            "cumulative_pnl": 11617.679999999993,
                                             "num_positions": 49
                                           },
                                           "actions_this_run": {
@@ -1395,65 +1395,65 @@
                                           "reasoning": {
                                             "top_predictions": [
                                               {
-                                                "symbol": "CDIO",
+                                                "symbol": "BNC",
                                                 "return": 0.5,
-                                                "confidence": 7.8074
+                                                "confidence": 5.8584
+                                              },
+                                              {
+                                                "symbol": "CNVCF",
+                                                "return": 0.5,
+                                                "confidence": 5.5707
                                               },
                                               {
                                                 "symbol": "ATGL",
                                                 "return": 0.5,
-                                                "confidence": 6.0463
+                                                "confidence": 5.4617
                                               },
                                               {
-                                                "symbol": "ANTA",
+                                                "symbol": "BGLC",
                                                 "return": 0.5,
-                                                "confidence": 5.997
-                                              },
-                                              {
-                                                "symbol": "BNC",
-                                                "return": 0.5,
-                                                "confidence": 5.9433
-                                              },
-                                              {
-                                                "symbol": "CNTQ",
-                                                "return": 0.5,
-                                                "confidence": 5.4966
-                                              },
-                                              {
-                                                "symbol": "ARIZ",
-                                                "return": 0.5,
-                                                "confidence": 4.795
-                                              },
-                                              {
-                                                "symbol": "ANPA",
-                                                "return": 0.5,
-                                                "confidence": 4.5491
-                                              },
-                                              {
-                                                "symbol": "ALZN",
-                                                "return": 0.5,
-                                                "confidence": 4.5131
-                                              },
-                                              {
-                                                "symbol": "ANGI",
-                                                "return": 0.5,
-                                                "confidence": 4.2396
+                                                "confidence": 5.2541
                                               },
                                               {
                                                 "symbol": "AMST",
                                                 "return": 0.5,
-                                                "confidence": 4.1118
+                                                "confidence": 4.7188
+                                              },
+                                              {
+                                                "symbol": "ANPA",
+                                                "return": 0.5,
+                                                "confidence": 4.5398
+                                              },
+                                              {
+                                                "symbol": "AGNT",
+                                                "return": 0.5,
+                                                "confidence": 4.3123
+                                              },
+                                              {
+                                                "symbol": "BXBL",
+                                                "return": 0.5,
+                                                "confidence": 4.036
+                                              },
+                                              {
+                                                "symbol": "BCAR",
+                                                "return": 0.5,
+                                                "confidence": 3.8824
+                                              },
+                                              {
+                                                "symbol": "ALZN",
+                                                "return": 0.5,
+                                                "confidence": 3.8395
                                               }
                                             ],
                                             "sell_reasons": []
                                           },
                                           "previous_context": {
-                                            "run_timestamp": "2026-08-03T19:49:22.968658",
+                                            "run_timestamp": "2026-08-04T00:30:32.353452",
                                             "portfolio": {
-                                              "cash": -89894.42,
-                                              "total_value": 116606.82,
-                                              "cumulative_pnl": 16606.820000000007,
-                                              "num_positions": 51
+                                              "cash": -88414.38,
+                                              "total_value": 116605.09,
+                                              "cumulative_pnl": 16605.089999999997,
+                                              "num_positions": 49
                                             },
                                             "actions_this_run": {
                                               "buys": [],
@@ -1464,59 +1464,129 @@
                                             "reasoning": {
                                               "top_predictions": [
                                                 {
-                                                  "symbol": "ANTA",
+                                                  "symbol": "CDIO",
                                                   "return": 0.5,
-                                                  "confidence": 6.3362
+                                                  "confidence": 7.8074
                                                 },
                                                 {
                                                   "symbol": "ATGL",
                                                   "return": 0.5,
-                                                  "confidence": 5.9954
+                                                  "confidence": 6.0463
                                                 },
                                                 {
-                                                  "symbol": "CNVCF",
+                                                  "symbol": "ANTA",
                                                   "return": 0.5,
-                                                  "confidence": 5.3055
+                                                  "confidence": 5.997
                                                 },
                                                 {
                                                   "symbol": "BNC",
                                                   "return": 0.5,
-                                                  "confidence": 5.0901
+                                                  "confidence": 5.9433
                                                 },
                                                 {
-                                                  "symbol": "AGNT",
+                                                  "symbol": "CNTQ",
                                                   "return": 0.5,
-                                                  "confidence": 4.7291
+                                                  "confidence": 5.4966
+                                                },
+                                                {
+                                                  "symbol": "ARIZ",
+                                                  "return": 0.5,
+                                                  "confidence": 4.795
                                                 },
                                                 {
                                                   "symbol": "ANPA",
                                                   "return": 0.5,
-                                                  "confidence": 4.4752
+                                                  "confidence": 4.5491
                                                 },
                                                 {
-                                                  "symbol": "AMST",
+                                                  "symbol": "ALZN",
                                                   "return": 0.5,
-                                                  "confidence": 4.4547
-                                                },
-                                                {
-                                                  "symbol": "CBRG",
-                                                  "return": 0.5,
-                                                  "confidence": 4.1868
-                                                },
-                                                {
-                                                  "symbol": "BCAR",
-                                                  "return": 0.5,
-                                                  "confidence": 4.1592
+                                                  "confidence": 4.5131
                                                 },
                                                 {
                                                   "symbol": "ANGI",
                                                   "return": 0.5,
-                                                  "confidence": 3.8181
+                                                  "confidence": 4.2396
+                                                },
+                                                {
+                                                  "symbol": "AMST",
+                                                  "return": 0.5,
+                                                  "confidence": 4.1118
                                                 }
                                               ],
                                               "sell_reasons": []
                                             },
-                                            "previous_context": null
+                                            "previous_context": {
+                                              "run_timestamp": "2026-08-03T19:49:22.968658",
+                                              "portfolio": {
+                                                "cash": -89894.42,
+                                                "total_value": 116606.82,
+                                                "cumulative_pnl": 16606.820000000007,
+                                                "num_positions": 51
+                                              },
+                                              "actions_this_run": {
+                                                "buys": [],
+                                                "sells": [],
+                                                "total_buys": 0,
+                                                "total_sells": 0
+                                              },
+                                              "reasoning": {
+                                                "top_predictions": [
+                                                  {
+                                                    "symbol": "ANTA",
+                                                    "return": 0.5,
+                                                    "confidence": 6.3362
+                                                  },
+                                                  {
+                                                    "symbol": "ATGL",
+                                                    "return": 0.5,
+                                                    "confidence": 5.9954
+                                                  },
+                                                  {
+                                                    "symbol": "CNVCF",
+                                                    "return": 0.5,
+                                                    "confidence": 5.3055
+                                                  },
+                                                  {
+                                                    "symbol": "BNC",
+                                                    "return": 0.5,
+                                                    "confidence": 5.0901
+                                                  },
+                                                  {
+                                                    "symbol": "AGNT",
+                                                    "return": 0.5,
+                                                    "confidence": 4.7291
+                                                  },
+                                                  {
+                                                    "symbol": "ANPA",
+                                                    "return": 0.5,
+                                                    "confidence": 4.4752
+                                                  },
+                                                  {
+                                                    "symbol": "AMST",
+                                                    "return": 0.5,
+                                                    "confidence": 4.4547
+                                                  },
+                                                  {
+                                                    "symbol": "CBRG",
+                                                    "return": 0.5,
+                                                    "confidence": 4.1868
+                                                  },
+                                                  {
+                                                    "symbol": "BCAR",
+                                                    "return": 0.5,
+                                                    "confidence": 4.1592
+                                                  },
+                                                  {
+                                                    "symbol": "ANGI",
+                                                    "return": 0.5,
+                                                    "confidence": 3.8181
+                                                  }
+                                                ],
+                                                "sell_reasons": []
+                                              },
+                                              "previous_context": null
+                                            }
                                           }
                                         }
                                       }
