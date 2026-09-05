@@ -1,9 +1,9 @@
-numpy>=1.24.0
-pandas>=2.0.0
+numpy==2.4.6
+pandas==3.0.5
 einops==0.8.1
 huggingface_hub==0.33.1
 tqdm==4.67.1
 safetensors==0.6.2
-requests
-pyarrow
-alpaca-py
+requests==2.34.2
+pyarrow==25.0.1
+alpaca-py==0.44.0
