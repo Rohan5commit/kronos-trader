@@ -732,13 +732,14 @@ class _AlpacaBroker:
 
     def get_summary(self, prices, num_scanned=0):
         """Build summary dict from Alpaca account + SQLite trade log."""
+        FUNDED_CAPITAL = 100_000.0
         account = self.get_account()
         positions = self.get_positions()
         today = datetime.now().strftime("%Y-%m-%d")
 
         with sqlite3.connect(self.db_path, timeout=30) as conn:
             prev = conn.execute("SELECT total_value FROM portfolio_snapshots ORDER BY date DESC LIMIT 1").fetchone()
-            prev_total = float(prev[0]) if prev else 100_000.0
+            prev_total = float(prev[0]) if prev else FUNDED_CAPITAL
 
             today_trades = conn.execute(
                 "SELECT symbol,action,shares,price,total,timestamp,reason FROM trades WHERE timestamp LIKE ? ORDER BY timestamp",
@@ -757,8 +758,8 @@ class _AlpacaBroker:
             daily_pnl = portfolio_value - prev_total
 
             first_snap = conn.execute("SELECT total_value FROM portfolio_snapshots ORDER BY date ASC LIMIT 1").fetchone()
-            initial_cash = float(first_snap[0]) if first_snap else 100_000.0
-            cum_pnl = portfolio_value - initial_cash
+            tracking_baseline = float(first_snap[0]) if first_snap else FUNDED_CAPITAL
+            cum_pnl = portfolio_value - tracking_baseline
 
             conn.execute(
                 "INSERT OR REPLACE INTO portfolio_snapshots (date,cash,equity,total_value,positions_json,daily_pnl,cumulative_pnl) VALUES (?,?,?,?,?,?,?)",
@@ -790,9 +791,6 @@ class _AlpacaBroker:
                         bc["shares"] -= shares
                         bc["total_cost"] = avg_cost * max(0, bc["shares"])
 
-            first_snap = conn.execute("SELECT total_value FROM portfolio_snapshots ORDER BY date ASC LIMIT 1").fetchone()
-            initial_cash = float(first_snap[0]) if first_snap else 100_000.0
-
         # Position details from Alpaca
         pos_details = []
         for sym, pos in positions.items():
@@ -810,6 +808,14 @@ class _AlpacaBroker:
             })
         pos_details.sort(key=lambda x: x["pnl"], reverse=True)
 
+        # Lifetime return vs funded capital (Alpaca never allows deposits/withdrawals)
+        unrealized = sum(p["pnl"] for p in pos_details)
+        lifetime_pnl = portfolio_value - FUNDED_CAPITAL
+        lifetime_pct = lifetime_pnl / FUNDED_CAPITAL
+        # Tracking-period return (since first snapshot / DB began)
+        tracking_pnl = total_realized + unrealized
+        tracking_pct = tracking_pnl / tracking_baseline if tracking_baseline else 0
+
         return {
             "date": today, "cash": cash, "equity": portfolio_value, "total_value": portfolio_value,
             "buying_power": account["buying_power"],
@@ -823,7 +829,12 @@ class _AlpacaBroker:
             "realized_pnl_today": realized_today,
             "total_realized": total_realized,
             "pos_details": pos_details,
-            "initial_cash": initial_cash,
+            "initial_cash": tracking_baseline,
+            "lifetime_pnl": lifetime_pnl,
+            "lifetime_pct": lifetime_pct,
+            "tracking_baseline": tracking_baseline,
+            "tracking_pct": tracking_pct,
+            "funded_capital": FUNDED_CAPITAL,
         }
 
 
@@ -1109,22 +1120,21 @@ def _format_report(summary, signals, actions):
     # Daily Performance
     lines.append("DAILY PERFORMANCE")
     lines.append("-" * 60)
-    initial = summary['initial_cash']
-    daily_pct = (summary['daily_pnl'] / initial) * 100
+    tracking_baseline = summary.get('tracking_baseline', 100_000.0)
+    daily_pct = (summary['daily_pnl'] / tracking_baseline) * 100
     lines.append(f"Daily Portfolio Change: {daily_pct:+.2f}% (${summary['daily_pnl']:,.2f})")
     lines.append("")
 
     # Account Totals
     lines.append("ACCOUNT TOTALS")
     lines.append("-" * 60)
-    total_realized_pct = (summary.get('total_realized', 0) / initial) * 100
-    lines.append(f"Total Realized P&L (Lifetime): {total_realized_pct:+.2f}% (${summary.get('total_realized', 0):,.2f})")
+    lifetime_pct = summary.get('lifetime_pct', 0) * 100
+    lifetime_pnl = summary.get('lifetime_pnl', 0)
+    lines.append(f"TOTAL ACCOUNT RETURN (Lifetime vs $100k funded): {lifetime_pct:+.2f}% (${lifetime_pnl:+,.2f})")
+    tracking_pct = summary.get('tracking_pct', 0) * 100
+    total_realized = summary.get('total_realized', 0)
     unrealized = sum(p["pnl"] for p in summary.get('pos_details', []))
-    unrealized_pct = (unrealized / initial) * 100
-    lines.append(f"Unrealized P&L (Open Positions): {unrealized_pct:+.2f}% (${unrealized:,.2f})")
-    lines.append("-" * 60)
-    total_return = (summary.get('total_realized', 0) + unrealized) / initial * 100
-    lines.append(f"TOTAL ACCOUNT RETURN: {total_return:+.2f}% (Lifetime Realized + Unrealized)")
+    lines.append(f"  Since tracking began ({summary.get('date', '?')} baseline): {tracking_pct:+.2f}% (realized ${total_realized:+,.2f} + unrealized ${unrealized:+,.2f})")
     lines.append("")
 
     # Positions Entered Today
